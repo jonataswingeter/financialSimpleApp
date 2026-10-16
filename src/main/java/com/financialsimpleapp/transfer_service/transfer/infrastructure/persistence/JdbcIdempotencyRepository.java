@@ -1,6 +1,8 @@
 package com.financialsimpleapp.transfer_service.transfer.infrastructure.persistence;
 
+import com.financialsimpleapp.transfer_service.transfer.application.port.IdempotencyRepository;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
+
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -9,14 +11,15 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Repository
-public class IdempotencyRepository {
+public class JdbcIdempotencyRepository implements IdempotencyRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public IdempotencyRepository(JdbcTemplate jdbcTemplate) {
+    public JdbcIdempotencyRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    @Override
     public boolean tryCreate(
             UUID clientId,
             String idempotencyKey,
@@ -42,6 +45,7 @@ public class IdempotencyRepository {
         return inserted == 1;
     }
 
+    @Override
     public Optional<ExistingIdempotencyRecord> find(
             UUID clientId,
             String idempotencyKey

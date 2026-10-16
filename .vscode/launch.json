@@ -1,0 +1,41 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+    {
+        "type": "java",
+        "name": "Launch Java Program",
+        "request": "launch",
+        "mainClass": ""
+    },
+        {
+            "type": "java",
+            "name": "Current File",
+            "request": "launch",
+            "mainClass": "${file}"
+        },
+        {
+            "type": "java",
+            "name": "TestTransferServiceApplication",
+            "request": "launch",
+            "mainClass": "com.financialsimpleapp.transfer_service.TestTransferServiceApplication",
+            "projectName": "transfer-service"
+        },
+        {
+            "type": "java",
+            "name": "TransferServiceApplication",
+            "request": "launch",
+            "mainClass": "com.financialsimpleapp.transfer_service.TransferServiceApplication",
+            "projectName": "transfer-service"
+        },
+        {
+            "type": "java",
+            "name": "TestThread",
+            "request": "launch",
+            "mainClass": "com.financialsimpleapp.transfer_service.transfer.application.TestThread",
+            "projectName": "transfer-service"
+        }
+    ]
+}

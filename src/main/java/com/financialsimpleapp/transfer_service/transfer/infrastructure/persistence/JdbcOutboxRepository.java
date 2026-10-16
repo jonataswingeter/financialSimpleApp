@@ -3,17 +3,20 @@ package com.financialsimpleapp.transfer_service.transfer.infrastructure.persiste
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import com.financialsimpleapp.transfer_service.transfer.application.port.OutboxRepository;
+
 import java.util.UUID;
 
 @Repository
-public class OutboxRepository {
+public class JdbcOutboxRepository implements OutboxRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public OutboxRepository(JdbcTemplate jdbcTemplate) {
+    public JdbcOutboxRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    @Override
     public void insertTransferAccepted(
             UUID eventId,
             UUID transferId
