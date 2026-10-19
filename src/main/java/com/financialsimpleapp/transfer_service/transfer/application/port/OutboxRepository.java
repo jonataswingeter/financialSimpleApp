@@ -1,5 +1,7 @@
 package com.financialsimpleapp.transfer_service.transfer.application.port;
 
+import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 
 public interface OutboxRepository {
@@ -8,4 +10,16 @@ public interface OutboxRepository {
       UUID eventId,
       UUID transferId);
 
+  List<ClaimedOutboxEvent> claimPending(
+      int batchSize,
+      Duration lockDuration);
+
+  boolean markPublished(
+      UUID eventId,
+      UUID lockToken);
+
+  boolean scheduleRetry(
+      UUID eventId,
+      UUID lockToken,
+      Duration delay);
 }
