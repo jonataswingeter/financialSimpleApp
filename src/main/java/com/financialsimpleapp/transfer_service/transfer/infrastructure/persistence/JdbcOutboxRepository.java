@@ -7,21 +7,25 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class JdbcOutboxRepository implements OutboxRepository {
 
   private static final String INSERT_TRANSFER_ACCEPTED = """
       INSERT INTO outbox_events (
-          event_id, aggregate_id, event_type, payload,
-          created_at, published_at, attempts, next_attempt_at,
-          locked_until, lock_token
+          event_id,
+          aggregate_id,
+          event_type,
+          payload,
+          created_at,
+          published_at,
+          attempts,
+          next_attempt_at,
+          locked_until,
+          lock_token
       )
       VALUES (
-          ?, ?, 'TRANSFER_ACCEPTED',
-          jsonb_build_object('eventId', ?, 'transferId', ?),
+          ?, ?, ?, CAST(? AS JSONB),
           now(), NULL, 0, now(), NULL, NULL
       )
       """;
@@ -84,21 +88,23 @@ public class JdbcOutboxRepository implements OutboxRepository {
   }
 
   @Override
-  @Transactional(propagation = Propagation.MANDATORY)
   public void insertTransferAccepted(
       UUID eventId,
       UUID transferId) {
+
+    String payload = """
+        {"eventId":"%s","transferId":"%s"}
+        """.formatted(eventId, transferId).trim();
 
     jdbcTemplate.update(
         INSERT_TRANSFER_ACCEPTED,
         eventId,
         transferId,
-        eventId,
-        transferId);
+        "TRANSFER_ACCEPTED",
+        payload);
   }
 
   @Override
-  @Transactional
   public List<ClaimedOutboxEvent> claimPending(int batchSize, Duration lockDuration) {
 
     if (batchSize <= 0) {
@@ -123,7 +129,6 @@ public class JdbcOutboxRepository implements OutboxRepository {
   }
 
   @Override
-  @Transactional
   public boolean markPublished(
       UUID eventId,
       UUID lockToken) {
@@ -135,7 +140,6 @@ public class JdbcOutboxRepository implements OutboxRepository {
   }
 
   @Override
-  @Transactional
   public boolean scheduleRetry(
       UUID eventId,
       UUID lockToken,

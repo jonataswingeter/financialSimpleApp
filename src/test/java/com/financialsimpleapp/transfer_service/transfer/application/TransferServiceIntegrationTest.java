@@ -12,6 +12,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -25,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.verify;
 
 @SpringBootTest
 @Testcontainers
@@ -149,9 +151,14 @@ class TransferServiceIntegrationTest {
         .when(outboxRepository)
         .insertTransferAccepted(any(UUID.class), any(UUID.class));
 
-    assertThrows(
+    IllegalStateException exception = assertThrows(
         IllegalStateException.class,
         () -> accept("request-004", new BigDecimal("40.00")));
+
+    assertEquals("Simulated outbox failure", exception.getMessage());
+
+    verify(outboxRepository)
+        .insertTransferAccepted(any(UUID.class), any(UUID.class));
 
     assertEquals(0, countTransfers());
     assertEquals(0, countIdempotencyRecords());
