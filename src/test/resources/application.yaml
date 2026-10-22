@@ -1,0 +1,6 @@
+app:
+  outbox:
+    scheduling:
+      enabled: false
+  kafka:
+    replication-factor: 1

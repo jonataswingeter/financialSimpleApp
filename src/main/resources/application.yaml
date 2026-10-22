@@ -16,8 +16,18 @@ spring:
   kafka:
     bootstrap-servers: localhost:29092,localhost:39092,localhost:49092
     producer:
+      acks: all
+      properties:
+        enable.idempotence: true
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      group-id: transfer-processing
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record
 
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/transfers}
