@@ -1,8 +1,24 @@
+app:
+  kafka:
+    topics:
+      transfer-accepted: transfer.accepted
+  outbox:
+    poll-delay-ms: 1000
+    batch-size: 20
+    lock-duration: PT5M
+    send-timeout: PT10S
+    retry-base: PT1S
+    retry-max: PT5M
+
 spring:
   application:
     name: transfer-service
   kafka:
     bootstrap-servers: localhost:29092,localhost:39092,localhost:49092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/transfers}
     username: ${DB_USERNAME:transfer_app}
