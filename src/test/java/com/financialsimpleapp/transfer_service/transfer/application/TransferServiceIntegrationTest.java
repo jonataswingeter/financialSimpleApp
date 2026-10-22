@@ -2,20 +2,16 @@ package com.financialsimpleapp.transfer_service.transfer.application;
 
 import java.util.concurrent.*;
 
+import com.financialsimpleapp.transfer_service.TestcontainersConfiguration;
 import com.financialsimpleapp.transfer_service.transfer.application.port.OutboxRepository;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
-import org.springframework.transaction.annotation.Transactional;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.util.Currency;
@@ -29,23 +25,8 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 
 @SpringBootTest
-@Testcontainers
+@Import(TestcontainersConfiguration.class)
 class TransferServiceIntegrationTest {
-
-  @Container
-  static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine")
-      .withDatabaseName("transfer_test")
-      .withUsername("test")
-      .withPassword("test");
-
-  @DynamicPropertySource
-  static void configureDatabase(DynamicPropertyRegistry registry) {
-    registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
-    registry.add("spring.datasource.username", POSTGRES::getUsername);
-    registry.add("spring.datasource.password", POSTGRES::getPassword);
-    registry.add("spring.datasource.driver-class-name",
-        POSTGRES::getDriverClassName);
-  }
 
   @Autowired
   private TransferService transferService;
