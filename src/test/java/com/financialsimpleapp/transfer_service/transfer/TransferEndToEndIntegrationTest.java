@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Exercises the whole transactional outbox flow against real PostgreSQL
  * and Kafka containers:
  * HTTP request -> transfer + outbox row (same transaction)
- * -> OutboxPublisher -> Kafka -> TransferAcceptedListener
+ * -> OutboxRelayService -> Kafka -> TransferAcceptedListener
  * -> balances, ledger entries and COMPLETED status.
  */
 @SpringBootTest(
