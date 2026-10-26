@@ -1,7 +1,7 @@
 package com.financialsimpleapp.transfer_service.transfer.infrastructure.persistence;
 
-import com.financialsimpleapp.transfer_service.transfer.application.port.ExistingIdempotencyRecord;
-import com.financialsimpleapp.transfer_service.transfer.application.port.IdempotencyRepository;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.ExistingIdempotencyRecord;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.IdempotencyRepository;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 
 import org.springframework.jdbc.core.JdbcTemplate;

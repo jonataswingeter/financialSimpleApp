@@ -1,7 +1,7 @@
 package com.financialsimpleapp.transfer_service.transfer.infrastructure.messaging;
 
 import com.financialsimpleapp.transfer_service.transfer.application.OutboxTransactionService;
-import com.financialsimpleapp.transfer_service.transfer.application.port.ClaimedOutboxEvent;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.ClaimedOutboxEvent;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;

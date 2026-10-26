@@ -1,8 +1,10 @@
 package com.financialsimpleapp.transfer_service.transfer.api;
 
-import com.financialsimpleapp.transfer_service.transfer.application.TransferAcceptanceResult;
-import com.financialsimpleapp.transfer_service.transfer.application.TransferService;
-import com.financialsimpleapp.transfer_service.transfer.application.TransferStatusResult;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferCommand;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferUseCase;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.GetTransferStatusUseCase;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferAcceptanceResult;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferStatusResult;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -15,10 +17,15 @@ import java.util.UUID;
 @RequestMapping("/api/v1/transfers")
 public class TransferController {
 
-    private final TransferService transferService;
+    private final AcceptTransferUseCase acceptTransferUseCase;
+    private final GetTransferStatusUseCase getTransferStatusUseCase;
 
-    public TransferController(TransferService transferService) {
-        this.transferService = transferService;
+    public TransferController(
+            AcceptTransferUseCase acceptTransferUseCase,
+            GetTransferStatusUseCase getTransferStatusUseCase
+    ) {
+        this.acceptTransferUseCase = acceptTransferUseCase;
+        this.getTransferStatusUseCase = getTransferStatusUseCase;
     }
 
     @PostMapping
@@ -30,13 +37,15 @@ public class TransferController {
         Currency currency = Currency.getInstance(request.currency());
 
         TransferAcceptanceResult result =
-                transferService.acceptTransfer(
-                        clientId,
-                        idempotencyKey,
-                        request.fromAccountId(),
-                        request.toAccountId(),
-                        request.amount(),
-                        currency
+                acceptTransferUseCase.acceptTransfer(
+                        new AcceptTransferCommand(
+                                clientId,
+                                idempotencyKey,
+                                request.fromAccountId(),
+                                request.toAccountId(),
+                                request.amount(),
+                                currency
+                        )
                 );
 
         TransferAcceptanceResponse response =
@@ -60,7 +69,7 @@ public class TransferController {
             @PathVariable UUID transferId
     ) {
         TransferStatusResult result =
-                transferService.getTransferStatus(transferId);
+                getTransferStatusUseCase.getTransferStatus(transferId);
 
         return ResponseEntity.ok(
                 new TransferStatusResponse(

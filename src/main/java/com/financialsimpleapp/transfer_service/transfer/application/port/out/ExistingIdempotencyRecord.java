@@ -1,4 +1,4 @@
-package com.financialsimpleapp.transfer_service.transfer.application.port;
+package com.financialsimpleapp.transfer_service.transfer.application.port.out;
 
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 import java.util.UUID;

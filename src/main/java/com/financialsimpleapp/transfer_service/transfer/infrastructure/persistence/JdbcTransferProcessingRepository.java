@@ -1,9 +1,13 @@
 package com.financialsimpleapp.transfer_service.transfer.infrastructure.persistence;
 
-import com.financialsimpleapp.transfer_service.transfer.application.port.TransferProcessingRepository;
-import com.financialsimpleapp.transfer_service.transfer.application.port.LockedAccount;
-import com.financialsimpleapp.transfer_service.transfer.application.port.TransferForProcessing;
-import java.math.BigDecimal;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferProcessingRepository;
+import com.financialsimpleapp.transfer_service.transfer.domain.Account;
+import com.financialsimpleapp.transfer_service.transfer.domain.AccountStatus;
+import com.financialsimpleapp.transfer_service.transfer.domain.LedgerEntry;
+import com.financialsimpleapp.transfer_service.transfer.domain.RejectionReason;
+import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
+import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
+import java.util.Currency;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -21,28 +25,35 @@ public class JdbcTransferProcessingRepository
   }
 
   @Override
-  public Optional<TransferForProcessing> lockTransfer(UUID transferId) {
-    List<TransferForProcessing> rows = jdbcTemplate.query("""
+  public Optional<Transfer> lockTransfer(UUID transferId) {
+    List<Transfer> rows = jdbcTemplate.query("""
         SELECT id, from_account_id, to_account_id,
-               amount, currency, status
+               amount, currency, status, rejection_code
         FROM transfer_requests
         WHERE id = ?
         FOR UPDATE
         """,
-        (rs, rowNum) -> new TransferForProcessing(
-            rs.getObject("id", UUID.class),
-            rs.getObject("from_account_id", UUID.class),
-            rs.getObject("to_account_id", UUID.class),
-            rs.getBigDecimal("amount"),
-            rs.getString("currency").trim(),
-            rs.getString("status")),
+        (rs, rowNum) -> {
+          String rejectionCode = rs.getString("rejection_code");
+
+          return Transfer.restore(
+              rs.getObject("id", UUID.class),
+              rs.getObject("from_account_id", UUID.class),
+              rs.getObject("to_account_id", UUID.class),
+              rs.getBigDecimal("amount"),
+              Currency.getInstance(rs.getString("currency").trim()),
+              TransferStatus.valueOf(rs.getString("status")),
+              rejectionCode == null
+                  ? null
+                  : RejectionReason.valueOf(rejectionCode));
+        },
         transferId);
 
     return rows.stream().findFirst();
   }
 
   @Override
-  public List<LockedAccount> lockAccounts(
+  public List<Account> lockAccounts(
       UUID sourceAccountId,
       UUID destinationAccountId) {
 
@@ -53,84 +64,65 @@ public class JdbcTransferProcessingRepository
         ORDER BY id
         FOR UPDATE
         """,
-        (rs, rowNum) -> new LockedAccount(
+        (rs, rowNum) -> new Account(
             rs.getObject("id", UUID.class),
-            rs.getString("currency").trim(),
+            Currency.getInstance(rs.getString("currency").trim()),
             rs.getBigDecimal("balance"),
-            rs.getString("status")),
+            AccountStatus.valueOf(rs.getString("status"))),
         sourceAccountId,
         destinationAccountId);
   }
 
   @Override
-  public void markProcessing(UUID transferId) {
-    int updated = jdbcTemplate.update("""
-        UPDATE transfer_requests
-        SET status = 'PROCESSING', updated_at = now()
-        WHERE id = ? AND status = 'ACCEPTED'
-        """, transferId);
+  public void saveOutcome(Transfer transfer) {
+    int updated = switch (transfer.getStatus()) {
+      case COMPLETED -> jdbcTemplate.update("""
+          UPDATE transfer_requests
+          SET status = 'COMPLETED',
+              rejection_code = NULL,
+              completed_at = now(),
+              updated_at = now()
+          WHERE id = ? AND status = 'ACCEPTED'
+          """, transfer.getId());
+
+      case REJECTED -> jdbcTemplate.update("""
+          UPDATE transfer_requests
+          SET status = 'REJECTED',
+              rejection_code = ?,
+              completed_at = NULL,
+              updated_at = now()
+          WHERE id = ? AND status = 'ACCEPTED'
+          """, transfer.getRejectionReason().name(), transfer.getId());
+
+      default -> throw new IllegalArgumentException(
+          "Transfer " + transfer.getId() + " has no final outcome: "
+              + transfer.getStatus());
+    };
 
     if (updated != 1) {
       throw new IllegalStateException(
-          "Transfer could not transition to PROCESSING: " + transferId);
+          "Transfer outcome could not be saved: " + transfer.getId());
     }
   }
 
   @Override
-  public void reject(UUID transferId, String rejectionCode) {
-    int updated = jdbcTemplate.update("""
-        UPDATE transfer_requests
-        SET status = 'REJECTED',
-            rejection_code = ?,
-            updated_at = now(),
-            completed_at = NULL
-        WHERE id = ? AND status = 'PROCESSING'
-        """, rejectionCode, transferId);
-
-    if (updated != 1) {
-      throw new IllegalStateException(
-          "Transfer could not be rejected: " + transferId);
-    }
-  }
-
-  @Override
-  public void debit(UUID accountId, BigDecimal amount) {
+  public void saveBalance(Account account) {
+    // The row is locked by lockAccounts, so writing the absolute
+    // balance computed by the domain is safe.
     int updated = jdbcTemplate.update("""
         UPDATE accounts
-        SET balance = balance - ?, updated_at = now()
+        SET balance = ?, updated_at = now()
         WHERE id = ?
-          AND status = 'ACTIVE'
-          AND balance >= ?
-        """, amount, accountId, amount);
+        """, account.getBalance(), account.getId());
 
     if (updated != 1) {
       throw new IllegalStateException(
-          "Source account could not be debited: " + accountId);
+          "Account balance could not be saved: " + account.getId());
     }
   }
 
   @Override
-  public void credit(UUID accountId, BigDecimal amount) {
-    int updated = jdbcTemplate.update("""
-        UPDATE accounts
-        SET balance = balance + ?, updated_at = now()
-        WHERE id = ? AND status = 'ACTIVE'
-        """, amount, accountId);
-
-    if (updated != 1) {
-      throw new IllegalStateException(
-          "Destination account could not be credited: " + accountId);
-    }
-  }
-
-  @Override
-  public void insertLedgerEntry(
-      UUID transferId,
-      UUID accountId,
-      String entryType,
-      BigDecimal signedAmount,
-      String currency) {
-
+  public void insertLedgerEntry(LedgerEntry entry) {
     jdbcTemplate.update("""
         INSERT INTO ledger_entries (
             id, transfer_id, account_id,
@@ -139,27 +131,10 @@ public class JdbcTransferProcessingRepository
         VALUES (?, ?, ?, ?, ?, ?, now())
         """,
         UUID.randomUUID(),
-        transferId,
-        accountId,
-        entryType,
-        signedAmount,
-        currency);
-  }
-
-  @Override
-  public void complete(UUID transferId) {
-    int updated = jdbcTemplate.update("""
-        UPDATE transfer_requests
-        SET status = 'COMPLETED',
-            rejection_code = NULL,
-            completed_at = now(),
-            updated_at = now()
-        WHERE id = ? AND status = 'PROCESSING'
-        """, transferId);
-
-    if (updated != 1) {
-      throw new IllegalStateException(
-          "Transfer could not be completed: " + transferId);
-    }
+        entry.transferId(),
+        entry.accountId(),
+        entry.type().name(),
+        entry.amount(),
+        entry.currency().getCurrencyCode());
   }
 }

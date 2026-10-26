@@ -1,7 +1,7 @@
 package com.financialsimpleapp.transfer_service.transfer.infrastructure.persistence;
 
-import com.financialsimpleapp.transfer_service.transfer.application.port.TransferRepository;
-import com.financialsimpleapp.transfer_service.transfer.application.port.TransferStatusData;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferRepository;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferStatusData;
 import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;

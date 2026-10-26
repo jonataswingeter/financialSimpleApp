@@ -2,6 +2,7 @@ package com.financialsimpleapp.transfer_service.transfer.domain;
 
 import java.math.BigDecimal;
 import java.util.Currency;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -14,7 +15,7 @@ public class Transfer {
     private final Currency currency;
 
     private TransferStatus status;
-    private String rejectionCode;
+    private RejectionReason rejectionReason;
 
     public Transfer(
             UUID id,
@@ -23,6 +24,19 @@ public class Transfer {
             BigDecimal amount,
             Currency currency
     ) {
+        this(id, fromAccountId, toAccountId, amount, currency,
+                TransferStatus.ACCEPTED, null);
+    }
+
+    private Transfer(
+            UUID id,
+            UUID fromAccountId,
+            UUID toAccountId,
+            BigDecimal amount,
+            Currency currency,
+            TransferStatus status,
+            RejectionReason rejectionReason
+    ) {
         this.id = Objects.requireNonNull(id, "Transfer ID is required");
         this.fromAccountId = Objects.requireNonNull(
                 fromAccountId, "Source account ID is required");
@@ -30,6 +44,7 @@ public class Transfer {
                 toAccountId, "Destination account ID is required");
         this.amount = Objects.requireNonNull(amount, "Amount is required");
         this.currency = Objects.requireNonNull(currency, "Currency is required");
+        this.status = Objects.requireNonNull(status, "Status is required");
 
         if (fromAccountId.equals(toAccountId)) {
             throw new IllegalArgumentException(
@@ -46,7 +61,99 @@ public class Transfer {
                     "Transfer amount cannot have more than 2 decimal places");
         }
 
-        this.status = TransferStatus.ACCEPTED;
+        if ((status == TransferStatus.REJECTED) != (rejectionReason != null)) {
+            throw new IllegalArgumentException(
+                    "Only rejected transfers have a rejection reason");
+        }
+
+        this.rejectionReason = rejectionReason;
+    }
+
+    /**
+     * Rebuilds a transfer that was already persisted.
+     */
+    public static Transfer restore(
+            UUID id,
+            UUID fromAccountId,
+            UUID toAccountId,
+            BigDecimal amount,
+            Currency currency,
+            TransferStatus status,
+            RejectionReason rejectionReason
+    ) {
+        return new Transfer(id, fromAccountId, toAccountId, amount,
+                currency, status, rejectionReason);
+    }
+
+    public boolean isFinal() {
+        return status == TransferStatus.COMPLETED
+                || status == TransferStatus.REJECTED;
+    }
+
+    /**
+     * Moves the money between the given accounts, or rejects the transfer
+     * when a business rule is violated.
+     *
+     * @return the ledger entries to record; empty when rejected
+     */
+    public List<LedgerEntry> execute(Account source, Account destination) {
+        Objects.requireNonNull(source, "Source account is required");
+        Objects.requireNonNull(destination, "Destination account is required");
+
+        if (!source.getId().equals(fromAccountId)
+                || !destination.getId().equals(toAccountId)) {
+            throw new IllegalArgumentException(
+                    "Accounts do not belong to transfer " + id);
+        }
+
+        startProcessing();
+
+        RejectionReason reason = findRejectionReason(source, destination);
+
+        if (reason != null) {
+            reject(reason);
+            return List.of();
+        }
+
+        source.debit(amount);
+        destination.credit(amount);
+        complete();
+
+        return List.of(
+                LedgerEntry.debit(id, source.getId(), amount, currency),
+                LedgerEntry.credit(id, destination.getId(), amount, currency));
+    }
+
+    /**
+     * Rejects the transfer because one of its accounts does not exist.
+     */
+    public void rejectForMissingAccount() {
+        startProcessing();
+        reject(RejectionReason.ACCOUNT_NOT_FOUND);
+    }
+
+    private RejectionReason findRejectionReason(
+            Account source,
+            Account destination
+    ) {
+        if (!source.isActive()) {
+            return RejectionReason.SOURCE_ACCOUNT_NOT_ACTIVE;
+        }
+
+        if (!destination.isActive()) {
+            return RejectionReason.DESTINATION_ACCOUNT_NOT_ACTIVE;
+        }
+
+        if (!currency.equals(source.getCurrency())
+                || !currency.equals(destination.getCurrency())) {
+            return RejectionReason.CURRENCY_MISMATCH;
+        }
+
+        if (!source.hasFunds(amount)) {
+            return RejectionReason.INSUFFICIENT_FUNDS;
+        }
+
+        return null;
     }
 
     public void startProcessing() {
@@ -65,22 +172,18 @@ public class Transfer {
         }
 
         status = TransferStatus.COMPLETED;
-        rejectionCode = null;
+        rejectionReason = null;
     }
 
-    public void reject(String rejectionCode) {
+    public void reject(RejectionReason reason) {
         if (status != TransferStatus.PROCESSING) {
             throw new IllegalStateException(
                     "Only processing transfers can be rejected");
         }
 
-        if (rejectionCode == null || rejectionCode.isBlank()) {
-            throw new IllegalArgumentException(
-                    "Rejection code is required");
-        }
-
         status = TransferStatus.REJECTED;
-        this.rejectionCode = rejectionCode;
+        this.rejectionReason = Objects.requireNonNull(
+                reason, "Rejection reason is required");
     }
 
     public UUID getId() {
@@ -107,8 +210,7 @@ public class Transfer {
         return status;
     }
 
-    public String getRejectionCode() {
-        return rejectionCode;
+    public RejectionReason getRejectionReason() {
+        return rejectionReason;
     }
 }
-

@@ -1,7 +1,7 @@
 package com.financialsimpleapp.transfer_service.transfer.infrastructure.persistence;
 
-import com.financialsimpleapp.transfer_service.transfer.application.port.ClaimedOutboxEvent;
-import com.financialsimpleapp.transfer_service.transfer.application.port.OutboxRepository;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.ClaimedOutboxEvent;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;

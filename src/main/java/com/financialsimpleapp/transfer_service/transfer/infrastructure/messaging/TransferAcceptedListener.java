@@ -1,7 +1,7 @@
 package com.financialsimpleapp.transfer_service.transfer.infrastructure.messaging;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.financialsimpleapp.transfer_service.transfer.application.TransferProcessingService;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.ProcessTransferUseCase;
 import java.io.IOException;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -10,13 +10,13 @@ import org.springframework.stereotype.Component;
 public class TransferAcceptedListener {
 
   private final ObjectMapper objectMapper;
-  private final TransferProcessingService transferProcessingService;
+  private final ProcessTransferUseCase processTransferUseCase;
 
   public TransferAcceptedListener(
       ObjectMapper objectMapper,
-      TransferProcessingService transferProcessingService) {
+      ProcessTransferUseCase processTransferUseCase) {
     this.objectMapper = objectMapper;
-    this.transferProcessingService = transferProcessingService;
+    this.processTransferUseCase = processTransferUseCase;
   }
 
   @KafkaListener(
@@ -26,6 +26,6 @@ public class TransferAcceptedListener {
     TransferAcceptedEvent event =
         objectMapper.readValue(payload, TransferAcceptedEvent.class);
 
-    transferProcessingService.process(event.transferId());
+    processTransferUseCase.process(event.transferId());
   }
 }

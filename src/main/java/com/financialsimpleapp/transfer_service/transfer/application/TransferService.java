@@ -1,22 +1,27 @@
 package com.financialsimpleapp.transfer_service.transfer.application;
 
-import com.financialsimpleapp.transfer_service.transfer.application.port.ExistingIdempotencyRecord;
-import com.financialsimpleapp.transfer_service.transfer.application.port.IdempotencyRepository;
-import com.financialsimpleapp.transfer_service.transfer.application.port.OutboxRepository;
-import com.financialsimpleapp.transfer_service.transfer.application.port.TransferRepository;
-import com.financialsimpleapp.transfer_service.transfer.application.port.TransferStatusData;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferCommand;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferUseCase;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.GetTransferStatusUseCase;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferAcceptanceResult;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferStatusResult;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.ExistingIdempotencyRecord;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.IdempotencyRepository;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferRepository;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferStatusData;
 import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.util.Currency;
 import java.util.Objects;
 import java.util.UUID;
 
 @Service
-public class TransferService {
+public class TransferService
+    implements AcceptTransferUseCase, GetTransferStatusUseCase {
 
   private final TransferRepository transferRepository;
   private final IdempotencyRepository idempotencyRepository;
@@ -31,25 +36,27 @@ public class TransferService {
     this.outboxRepository = outboxRepository;
   }
 
+  @Override
   @Transactional
   public TransferAcceptanceResult acceptTransfer(
-      UUID clientId,
-      String idempotencyKey,
-      UUID fromAccountId,
-      UUID toAccountId,
-      BigDecimal amount,
-      Currency currency) {
+      AcceptTransferCommand command) {
+    Objects.requireNonNull(command, "Command is required");
+
+    UUID clientId = command.clientId();
+    String idempotencyKey = command.idempotencyKey();
+
     Objects.requireNonNull(clientId, "Client ID is required");
     TransferSupport.validateIdempotencyKey(idempotencyKey);
 
-    BigDecimal normalizedAmount = TransferSupport.normalizeAmount(amount);
+    BigDecimal normalizedAmount = TransferSupport.normalizeAmount(
+        command.amount());
 
     Transfer transfer = new Transfer(
         UUID.randomUUID(),
-        fromAccountId,
-        toAccountId,
+        command.fromAccountId(),
+        command.toAccountId(),
         normalizedAmount,
-        currency);
+        command.currency());
 
     String requestHash = TransferSupport.calculateRequestHash(
         transfer.getFromAccountId(),
@@ -97,6 +104,7 @@ public class TransferService {
         false);
   }
 
+  @Override
   public TransferStatusResult getTransferStatus(
       UUID transferId) {
     Objects.requireNonNull(transferId, "Transfer ID is required");

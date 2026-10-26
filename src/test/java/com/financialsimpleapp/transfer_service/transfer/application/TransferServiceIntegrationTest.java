@@ -3,7 +3,10 @@ package com.financialsimpleapp.transfer_service.transfer.application;
 import java.util.concurrent.*;
 
 import com.financialsimpleapp.transfer_service.TestcontainersConfiguration;
-import com.financialsimpleapp.transfer_service.transfer.application.port.OutboxRepository;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferCommand;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferUseCase;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferAcceptanceResult;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,7 +32,7 @@ import static org.mockito.Mockito.verify;
 class TransferServiceIntegrationTest {
 
   @Autowired
-  private TransferService transferService;
+  private AcceptTransferUseCase acceptTransferUseCase;
 
   @Autowired
   private JdbcTemplate jdbcTemplate;
@@ -302,13 +305,14 @@ class TransferServiceIntegrationTest {
   private TransferAcceptanceResult accept(
       String idempotencyKey,
       BigDecimal amount) {
-    return transferService.acceptTransfer(
-        clientId,
-        idempotencyKey,
-        fromAccountId,
-        toAccountId,
-        amount,
-        EUR);
+    return acceptTransferUseCase.acceptTransfer(
+        new AcceptTransferCommand(
+            clientId,
+            idempotencyKey,
+            fromAccountId,
+            toAccountId,
+            amount,
+            EUR));
   }
 
   private void insertAccount(UUID accountId, BigDecimal balance) {

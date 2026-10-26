@@ -1,9 +1,12 @@
 package com.financialsimpleapp.transfer_service.transfer.application;
 
-import com.financialsimpleapp.transfer_service.transfer.application.port.TransferProcessingRepository;
-import com.financialsimpleapp.transfer_service.transfer.application.port.LockedAccount;
-import com.financialsimpleapp.transfer_service.transfer.application.port.TransferForProcessing;
-import java.math.BigDecimal;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.ProcessTransferUseCase;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferProcessingRepository;
+import com.financialsimpleapp.transfer_service.transfer.domain.Account;
+import com.financialsimpleapp.transfer_service.transfer.domain.LedgerEntry;
+import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
+import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
@@ -12,7 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-public class TransferProcessingService {
+public class TransferProcessingService implements ProcessTransferUseCase {
 
   private final TransferProcessingRepository repository;
 
@@ -21,86 +24,43 @@ public class TransferProcessingService {
     this.repository = repository;
   }
 
+  @Override
   @Transactional
   public void process(UUID transferId) {
-    TransferForProcessing transfer = repository.lockTransfer(transferId)
+    Transfer transfer = repository.lockTransfer(transferId)
         .orElseThrow(() -> new IllegalStateException(
             "Transfer does not exist: " + transferId));
 
     // Kafka may deliver the same event more than once.
-    if ("COMPLETED".equals(transfer.status())
-        || "REJECTED".equals(transfer.status())) {
+    if (transfer.isFinal()) {
       return;
     }
 
-    if (!"ACCEPTED".equals(transfer.status())) {
-      throw new IllegalStateException(
-          "Unexpected transfer status " + transfer.status()
-              + " for transfer " + transferId);
-    }
-
-    repository.markProcessing(transferId);
-
-    Map<UUID, LockedAccount> accounts = repository.lockAccounts(
-            transfer.sourceAccountId(),
-            transfer.destinationAccountId())
+    Map<UUID, Account> accounts = repository.lockAccounts(
+            transfer.getFromAccountId(),
+            transfer.getToAccountId())
         .stream()
         .collect(Collectors.toMap(
-            LockedAccount::id,
+            Account::getId,
             Function.identity()));
 
-    LockedAccount source = accounts.get(transfer.sourceAccountId());
-    LockedAccount destination = accounts.get(transfer.destinationAccountId());
+    Account source = accounts.get(transfer.getFromAccountId());
+    Account destination = accounts.get(transfer.getToAccountId());
 
     if (source == null || destination == null) {
-      reject(transferId, "ACCOUNT_NOT_FOUND");
+      transfer.rejectForMissingAccount();
+      repository.saveOutcome(transfer);
       return;
     }
 
-    if (!"ACTIVE".equals(source.status())) {
-      reject(transferId, "SOURCE_ACCOUNT_NOT_ACTIVE");
-      return;
+    List<LedgerEntry> entries = transfer.execute(source, destination);
+
+    if (transfer.getStatus() == TransferStatus.COMPLETED) {
+      repository.saveBalance(source);
+      repository.saveBalance(destination);
+      entries.forEach(repository::insertLedgerEntry);
     }
 
-    if (!"ACTIVE".equals(destination.status())) {
-      reject(transferId, "DESTINATION_ACCOUNT_NOT_ACTIVE");
-      return;
-    }
-
-    if (!transfer.currency().equals(source.currency())
-        || !transfer.currency().equals(destination.currency())) {
-      reject(transferId, "CURRENCY_MISMATCH");
-      return;
-    }
-
-    BigDecimal amount = transfer.amount();
-
-    if (source.balance().compareTo(amount) < 0) {
-      reject(transferId, "INSUFFICIENT_FUNDS");
-      return;
-    }
-
-    repository.debit(source.id(), amount);
-    repository.credit(destination.id(), amount);
-
-    repository.insertLedgerEntry(
-        transferId,
-        source.id(),
-        "DEBIT",
-        amount.negate(),
-        transfer.currency());
-
-    repository.insertLedgerEntry(
-        transferId,
-        destination.id(),
-        "CREDIT",
-        amount,
-        transfer.currency());
-
-    repository.complete(transferId);
-  }
-
-  private void reject(UUID transferId, String code) {
-    repository.reject(transferId, code);
+    repository.saveOutcome(transfer);
   }
 }
