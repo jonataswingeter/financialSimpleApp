@@ -1,12 +1,12 @@
 package com.financialsimpleapp.transfer_service.transfer.application;
 
+import com.financialsimpleapp.transfer_service.transfer.application.port.ExistingIdempotencyRecord;
 import com.financialsimpleapp.transfer_service.transfer.application.port.IdempotencyRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.OutboxRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.TransferRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.TransferStatusData;
 import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
-import com.financialsimpleapp.transfer_service.transfer.infrastructure.persistence.JdbcIdempotencyRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -69,7 +69,7 @@ public class TransferService {
 
     if (!reserved) {
       // 3. Resolve the existing request.
-      JdbcIdempotencyRepository.ExistingIdempotencyRecord existing = idempotencyRepository.find(clientId, idempotencyKey)
+      ExistingIdempotencyRecord existing = idempotencyRepository.find(clientId, idempotencyKey)
           .orElseThrow(() -> new IllegalStateException(
               "Idempotency record was not found after conflict"));
 

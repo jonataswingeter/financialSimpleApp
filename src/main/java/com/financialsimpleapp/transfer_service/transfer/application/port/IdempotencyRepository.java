@@ -3,8 +3,6 @@ package com.financialsimpleapp.transfer_service.transfer.application.port;
 import java.util.Optional;
 import java.util.UUID;
 
-import com.financialsimpleapp.transfer_service.transfer.infrastructure.persistence.JdbcIdempotencyRepository.ExistingIdempotencyRecord;
-
 public interface IdempotencyRepository {
 
   boolean tryCreate(

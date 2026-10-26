@@ -1,5 +1,6 @@
 package com.financialsimpleapp.transfer_service.transfer.infrastructure.persistence;
 
+import com.financialsimpleapp.transfer_service.transfer.application.port.ExistingIdempotencyRecord;
 import com.financialsimpleapp.transfer_service.transfer.application.port.IdempotencyRepository;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 
@@ -67,12 +68,5 @@ public class JdbcIdempotencyRepository implements IdempotencyRepository {
         );
 
         return records.stream().findFirst();
-    }
-
-    public record ExistingIdempotencyRecord(
-            String requestHash,
-            UUID transferId,
-            TransferStatus status
-    ) {
     }
 }
