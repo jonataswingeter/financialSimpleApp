@@ -21,6 +21,9 @@ public class KafkaConsumerConfig {
   @Value("${app.kafka.partitions:3}")
   private int partitions;
 
+  @Value("${app.kafka.min-insync-replicas:2}")
+  private int minInSyncReplicas;
+
   @Bean
   NewTopic transferAcceptedTopic(
       @Value("${app.kafka.topics.transfer-accepted:transfer.accepted}") String topic) {
@@ -37,7 +40,8 @@ public class KafkaConsumerConfig {
     return TopicBuilder.name(name)
         .partitions(partitions)
         .replicas(replicationFactor)
-        .config(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "2")
+        .config(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG,
+            String.valueOf(minInSyncReplicas))
         .build();
   }
 

@@ -4,3 +4,4 @@ app:
       enabled: false
   kafka:
     replication-factor: 1
+    min-insync-replicas: 1
