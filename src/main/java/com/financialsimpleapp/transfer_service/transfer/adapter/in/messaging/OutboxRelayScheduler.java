@@ -1,4 +1,4 @@
-package com.financialsimpleapp.transfer_service.transfer.infrastructure.messaging;
+package com.financialsimpleapp.transfer_service.transfer.adapter.in.messaging;
 
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.RelayOutboxEventsUseCase;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;

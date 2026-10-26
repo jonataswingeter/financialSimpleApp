@@ -1,4 +1,4 @@
-package com.financialsimpleapp.transfer_service.transfer.infrastructure.persistence;
+package com.financialsimpleapp.transfer_service.transfer.adapter.out.persistence;
 
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.ExistingIdempotencyRecord;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.IdempotencyRepository;

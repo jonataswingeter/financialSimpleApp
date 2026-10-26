@@ -1,4 +1,4 @@
-package com.financialsimpleapp.transfer_service.transfer.application;
+package com.financialsimpleapp.transfer_service.transfer.application.service;
 
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.ProcessTransferUseCase;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferProcessingRepository;

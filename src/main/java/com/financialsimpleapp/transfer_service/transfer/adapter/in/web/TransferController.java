@@ -1,4 +1,4 @@
-package com.financialsimpleapp.transfer_service.transfer.api;
+package com.financialsimpleapp.transfer_service.transfer.adapter.in.web;
 
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferCommand;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferUseCase;

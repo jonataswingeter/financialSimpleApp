@@ -1,12 +1,14 @@
-package com.financialsimpleapp.transfer_service.transfer.application;
+package com.financialsimpleapp.transfer_service.transfer.application.service;
 
 import java.util.concurrent.*;
 
 import com.financialsimpleapp.transfer_service.TestcontainersConfiguration;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferCommand;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferUseCase;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.IdempotencyConflictException;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferAcceptanceResult;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
+import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -133,7 +135,7 @@ class TransferServiceIntegrationTest {
   void shouldRollbackAllWritesWhenOutboxInsertFails() {
     doThrow(new IllegalStateException("Simulated outbox failure"))
         .when(outboxRepository)
-        .insertTransferAccepted(any(UUID.class), any(UUID.class));
+        .insertTransferAccepted(any(TransferAcceptedEvent.class));
 
     IllegalStateException exception = assertThrows(
         IllegalStateException.class,
@@ -142,7 +144,7 @@ class TransferServiceIntegrationTest {
     assertEquals("Simulated outbox failure", exception.getMessage());
 
     verify(outboxRepository)
-        .insertTransferAccepted(any(UUID.class), any(UUID.class));
+        .insertTransferAccepted(any(TransferAcceptedEvent.class));
 
     assertEquals(0, countTransfers());
     assertEquals(0, countIdempotencyRecords());

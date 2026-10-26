@@ -1,9 +1,9 @@
 package com.financialsimpleapp.transfer_service.transfer;
 
 import com.financialsimpleapp.transfer_service.TestcontainersConfiguration;
-import com.financialsimpleapp.transfer_service.transfer.api.TransferAcceptanceResponse;
-import com.financialsimpleapp.transfer_service.transfer.api.TransferRequest;
-import com.financialsimpleapp.transfer_service.transfer.api.TransferStatusResponse;
+import com.financialsimpleapp.transfer_service.transfer.adapter.in.web.TransferAcceptanceResponse;
+import com.financialsimpleapp.transfer_service.transfer.adapter.in.web.TransferRequest;
+import com.financialsimpleapp.transfer_service.transfer.adapter.in.web.TransferStatusResponse;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

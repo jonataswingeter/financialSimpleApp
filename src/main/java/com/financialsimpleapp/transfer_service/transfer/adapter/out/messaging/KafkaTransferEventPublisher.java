@@ -1,4 +1,4 @@
-package com.financialsimpleapp.transfer_service.transfer.infrastructure.messaging;
+package com.financialsimpleapp.transfer_service.transfer.adapter.out.messaging;
 
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.EventPublishingException;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferEventPublisher;

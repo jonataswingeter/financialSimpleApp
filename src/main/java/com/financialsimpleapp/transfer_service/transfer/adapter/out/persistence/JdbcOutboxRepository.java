@@ -1,7 +1,10 @@
-package com.financialsimpleapp.transfer_service.transfer.infrastructure.persistence;
+package com.financialsimpleapp.transfer_service.transfer.adapter.out.persistence;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.ClaimedOutboxEvent;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
+import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
@@ -82,26 +85,32 @@ public class JdbcOutboxRepository implements OutboxRepository {
       """;
 
   private final JdbcTemplate jdbcTemplate;
+  private final ObjectMapper objectMapper;
 
-  public JdbcOutboxRepository(JdbcTemplate jdbcTemplate) {
+  public JdbcOutboxRepository(
+      JdbcTemplate jdbcTemplate,
+      ObjectMapper objectMapper) {
     this.jdbcTemplate = jdbcTemplate;
+    this.objectMapper = objectMapper;
   }
 
   @Override
-  public void insertTransferAccepted(
-      UUID eventId,
-      UUID transferId) {
-
-    String payload = """
-        {"eventId":"%s","transferId":"%s"}
-        """.formatted(eventId, transferId).trim();
-
+  public void insertTransferAccepted(TransferAcceptedEvent event) {
     jdbcTemplate.update(
         INSERT_TRANSFER_ACCEPTED,
-        eventId,
-        transferId,
-        "TRANSFER_ACCEPTED",
-        payload);
+        event.eventId(),
+        event.transferId(),
+        TransferAcceptedEvent.TYPE,
+        toJson(event));
+  }
+
+  private String toJson(Object event) {
+    try {
+      return objectMapper.writeValueAsString(event);
+    } catch (JsonProcessingException exception) {
+      throw new IllegalStateException(
+          "Could not serialize outbox event", exception);
+    }
   }
 
   @Override

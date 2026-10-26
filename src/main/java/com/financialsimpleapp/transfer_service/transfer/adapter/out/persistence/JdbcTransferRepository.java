@@ -1,4 +1,4 @@
-package com.financialsimpleapp.transfer_service.transfer.infrastructure.persistence;
+package com.financialsimpleapp.transfer_service.transfer.adapter.out.persistence;
 
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferStatusData;

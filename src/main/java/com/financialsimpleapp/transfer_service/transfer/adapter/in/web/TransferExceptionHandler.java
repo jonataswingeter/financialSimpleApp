@@ -1,7 +1,7 @@
-package com.financialsimpleapp.transfer_service.transfer.api;
+package com.financialsimpleapp.transfer_service.transfer.adapter.in.web;
 
-import com.financialsimpleapp.transfer_service.transfer.application.IdempotencyConflictException;
-import com.financialsimpleapp.transfer_service.transfer.application.TransferNotFoundException;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.IdempotencyConflictException;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;

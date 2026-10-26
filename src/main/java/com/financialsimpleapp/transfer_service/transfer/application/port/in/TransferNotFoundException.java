@@ -1,4 +1,4 @@
-package com.financialsimpleapp.transfer_service.transfer.application;
+package com.financialsimpleapp.transfer_service.transfer.application.port.in;
 
 import java.util.UUID;
 

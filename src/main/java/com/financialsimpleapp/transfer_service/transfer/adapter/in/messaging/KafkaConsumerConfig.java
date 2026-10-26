@@ -1,4 +1,4 @@
-package com.financialsimpleapp.transfer_service.transfer.infrastructure.messaging;
+package com.financialsimpleapp.transfer_service.transfer.adapter.in.messaging;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.clients.admin.NewTopic;

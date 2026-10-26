@@ -1,4 +1,4 @@
-package com.financialsimpleapp.transfer_service.transfer.api;
+package com.financialsimpleapp.transfer_service.transfer.adapter.in.web;
 
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;

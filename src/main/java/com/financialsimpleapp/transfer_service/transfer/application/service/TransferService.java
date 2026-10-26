@@ -1,16 +1,19 @@
-package com.financialsimpleapp.transfer_service.transfer.application;
+package com.financialsimpleapp.transfer_service.transfer.application.service;
 
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferCommand;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferUseCase;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.GetTransferStatusUseCase;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.IdempotencyConflictException;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferAcceptanceResult;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferStatusResult;
+import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferNotFoundException;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.ExistingIdempotencyRecord;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.IdempotencyRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferStatusData;
 import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
+import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -95,8 +98,7 @@ public class TransferService
 
     // 4. Persist the event in the same database transaction.
     outboxRepository.insertTransferAccepted(
-        UUID.randomUUID(),
-        transfer.getId());
+        new TransferAcceptedEvent(UUID.randomUUID(), transfer.getId()));
 
     return new TransferAcceptanceResult(
         transfer.getId(),

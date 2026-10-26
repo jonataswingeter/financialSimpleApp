@@ -1,7 +1,8 @@
-package com.financialsimpleapp.transfer_service.transfer.infrastructure.messaging;
+package com.financialsimpleapp.transfer_service.transfer.adapter.in.messaging;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.ProcessTransferUseCase;
+import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
 import java.io.IOException;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
