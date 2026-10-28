@@ -10,16 +10,15 @@ import org.testcontainers.utility.DockerImageName;
 @TestConfiguration(proxyBeanMethods = false)
 public class TestcontainersConfiguration {
 
-	@Bean
-	@ServiceConnection
-	KafkaContainer kafkaContainer() {
-		return new KafkaContainer(DockerImageName.parse("apache/kafka-native:4.1.2"));
-	}
+  @Bean
+  @ServiceConnection
+  KafkaContainer kafkaContainer() {
+    return new KafkaContainer(DockerImageName.parse("apache/kafka-native:4.1.2"));
+  }
 
-	@Bean
-	@ServiceConnection
-	PostgreSQLContainer postgresContainer() {
-		return new PostgreSQLContainer(DockerImageName.parse("postgres:16-alpine"));
-	}
-
+  @Bean
+  @ServiceConnection
+  PostgreSQLContainer postgresContainer() {
+    return new PostgreSQLContainer(DockerImageName.parse("postgres:16-alpine"));
+  }
 }

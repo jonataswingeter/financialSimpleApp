@@ -14,8 +14,7 @@ public class TransferAcceptedListener {
   private final ProcessTransferUseCase processTransferUseCase;
 
   public TransferAcceptedListener(
-      ObjectMapper objectMapper,
-      ProcessTransferUseCase processTransferUseCase) {
+      ObjectMapper objectMapper, ProcessTransferUseCase processTransferUseCase) {
     this.objectMapper = objectMapper;
     this.processTransferUseCase = processTransferUseCase;
   }
@@ -24,8 +23,7 @@ public class TransferAcceptedListener {
       topics = "${app.kafka.topics.transfer-accepted:transfer.accepted}",
       groupId = "${spring.kafka.consumer.group-id:transfer-processing}")
   public void onMessage(String payload) throws IOException {
-    TransferAcceptedEvent event =
-        objectMapper.readValue(payload, TransferAcceptedEvent.class);
+    TransferAcceptedEvent event = objectMapper.readValue(payload, TransferAcceptedEvent.class);
 
     processTransferUseCase.process(event.transferId());
   }

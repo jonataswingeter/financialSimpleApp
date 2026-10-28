@@ -1,9 +1,8 @@
 package com.financialsimpleapp.transfer_service.transfer.application.port.out;
 
+import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
 import java.util.Optional;
 import java.util.UUID;
-
-import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
 
 public interface TransferRepository {
 
@@ -12,5 +11,4 @@ public interface TransferRepository {
   void deleteById(UUID transferId);
 
   Optional<TransferStatusData> findStatusById(UUID transferId);
-
 }

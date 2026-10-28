@@ -32,17 +32,16 @@ public class KafkaTransferEventPublisher implements TransferEventPublisher {
     try {
       // The transfer ID is the key, so all events of a transfer
       // land on the same partition and keep their order.
-      kafkaTemplate.send(topic, transferId.toString(), payload)
+      kafkaTemplate
+          .send(topic, transferId.toString(), payload)
           .get(sendTimeout.toMillis(), TimeUnit.MILLISECONDS);
 
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
-      throw new EventPublishingException(
-          "Interrupted while publishing transfer " + transferId, ex);
+      throw new EventPublishingException("Interrupted while publishing transfer " + transferId, ex);
 
     } catch (ExecutionException | TimeoutException ex) {
-      throw new EventPublishingException(
-          "Kafka did not confirm transfer " + transferId, ex);
+      throw new EventPublishingException("Kafka did not confirm transfer " + transferId, ex);
     }
   }
 }

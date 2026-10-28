@@ -1,6 +1,10 @@
 package com.financialsimpleapp.transfer_service.transfer.application.service;
 
-import java.util.concurrent.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.verify;
 
 import com.financialsimpleapp.transfer_service.TestcontainersConfiguration;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferCommand;
@@ -10,6 +14,18 @@ import com.financialsimpleapp.transfer_service.transfer.application.port.in.Tran
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
+import java.math.BigDecimal;
+import java.util.Currency;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,29 +34,15 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
-import java.math.BigDecimal;
-import java.util.Currency;
-import java.util.List;
-import java.util.UUID;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.verify;
-
 @SpringBootTest
 @Import(TestcontainersConfiguration.class)
 class TransferServiceIntegrationTest {
 
-  @Autowired
-  private AcceptTransferUseCase acceptTransferUseCase;
+  @Autowired private AcceptTransferUseCase acceptTransferUseCase;
 
-  @Autowired
-  private JdbcTemplate jdbcTemplate;
+  @Autowired private JdbcTemplate jdbcTemplate;
 
-  @MockitoSpyBean
-  private OutboxRepository outboxRepository;
+  @MockitoSpyBean private OutboxRepository outboxRepository;
 
   private final UUID clientId = UUID.randomUUID();
   private final UUID fromAccountId = UUID.randomUUID();
@@ -64,9 +66,7 @@ class TransferServiceIntegrationTest {
 
   @Test
   void shouldCreateTransferIdempotencyRecordAndOutboxEvent() {
-    TransferAcceptanceResult result = accept(
-        "request-001",
-        new BigDecimal("25.00"));
+    TransferAcceptanceResult result = accept("request-001", new BigDecimal("25.00"));
 
     assertNotNull(result.transferId());
     assertEquals(TransferStatus.ACCEPTED, result.status());
@@ -76,23 +76,18 @@ class TransferServiceIntegrationTest {
     assertEquals(1, countIdempotencyRecords());
     assertEquals(1, countOutboxEvents());
 
-    String storedStatus = jdbcTemplate.queryForObject(
-        "SELECT status FROM transfer_requests WHERE id = ?",
-        String.class,
-        result.transferId());
+    String storedStatus =
+        jdbcTemplate.queryForObject(
+            "SELECT status FROM transfer_requests WHERE id = ?", String.class, result.transferId());
 
     assertEquals("ACCEPTED", storedStatus);
   }
 
   @Test
   void shouldReturnOriginalTransferForIdenticalRetry() {
-    TransferAcceptanceResult first = accept(
-        "request-002",
-        new BigDecimal("25.00"));
+    TransferAcceptanceResult first = accept("request-002", new BigDecimal("25.00"));
 
-    TransferAcceptanceResult retry = accept(
-        "request-002",
-        new BigDecimal("25.00"));
+    TransferAcceptanceResult retry = accept("request-002", new BigDecimal("25.00"));
 
     assertEquals(first.transferId(), retry.transferId());
     assertEquals(TransferStatus.ACCEPTED, retry.status());
@@ -106,27 +101,26 @@ class TransferServiceIntegrationTest {
 
   @Test
   void shouldRejectSameKeyWithDifferentRequestAndRollbackCandidate() {
-    TransferAcceptanceResult first = accept(
-        "request-003",
-        new BigDecimal("25.00"));
+    TransferAcceptanceResult first = accept("request-003", new BigDecimal("25.00"));
 
     assertThrows(
-        IdempotencyConflictException.class,
-        () -> accept("request-003", new BigDecimal("30.00")));
+        IdempotencyConflictException.class, () -> accept("request-003", new BigDecimal("30.00")));
 
     assertEquals(1, countTransfers());
     assertEquals(1, countIdempotencyRecords());
     assertEquals(1, countOutboxEvents());
 
-    UUID persistedTransferId = jdbcTemplate.queryForObject("""
-        SELECT transfer_id
-        FROM idempotency_records
-        WHERE client_id = ?
-          AND idempotency_key = ?
-        """,
-        UUID.class,
-        clientId,
-        "request-003");
+    UUID persistedTransferId =
+        jdbcTemplate.queryForObject(
+            """
+            SELECT transfer_id
+            FROM idempotency_records
+            WHERE client_id = ?
+              AND idempotency_key = ?
+            """,
+            UUID.class,
+            clientId,
+            "request-003");
 
     assertEquals(first.transferId(), persistedTransferId);
   }
@@ -137,14 +131,13 @@ class TransferServiceIntegrationTest {
         .when(outboxRepository)
         .insertTransferAccepted(any(TransferAcceptedEvent.class));
 
-    IllegalStateException exception = assertThrows(
-        IllegalStateException.class,
-        () -> accept("request-004", new BigDecimal("40.00")));
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class, () -> accept("request-004", new BigDecimal("40.00")));
 
     assertEquals("Simulated outbox failure", exception.getMessage());
 
-    verify(outboxRepository)
-        .insertTransferAccepted(any(TransferAcceptedEvent.class));
+    verify(outboxRepository).insertTransferAccepted(any(TransferAcceptedEvent.class));
 
     assertEquals(0, countTransfers());
     assertEquals(0, countIdempotencyRecords());
@@ -152,8 +145,7 @@ class TransferServiceIntegrationTest {
   }
 
   @Test
-  void shouldCreateOnlyOneTransferForConcurrentIdenticalRequests()
-      throws Exception {
+  void shouldCreateOnlyOneTransferForConcurrentIdenticalRequests() throws Exception {
 
     String idempotencyKey = "concurrent-request-001";
     BigDecimal amount = new BigDecimal("25.00");
@@ -164,15 +156,16 @@ class TransferServiceIntegrationTest {
     CountDownLatch start = new CountDownLatch(1);
 
     try {
-      Callable<TransferAcceptanceResult> request = () -> {
-        ready.countDown();
+      Callable<TransferAcceptanceResult> request =
+          () -> {
+            ready.countDown();
 
-        if (!start.await(10, TimeUnit.SECONDS)) {
-          throw new TimeoutException("Timed out waiting to start");
-        }
+            if (!start.await(10, TimeUnit.SECONDS)) {
+              throw new TimeoutException("Timed out waiting to start");
+            }
 
-        return accept(idempotencyKey, amount);
-      };
+            return accept(idempotencyKey, amount);
+          };
 
       Future<TransferAcceptanceResult> first = executor.submit(request);
 
@@ -202,15 +195,12 @@ class TransferServiceIntegrationTest {
       start.countDown();
       executor.shutdownNow();
 
-      assertTrue(
-          executor.awaitTermination(10, TimeUnit.SECONDS),
-          "Executor did not terminate");
+      assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS), "Executor did not terminate");
     }
   }
 
   @Test
-  void shouldRejectConcurrentRequestsWithSameKeyAndDifferentAmounts()
-      throws Exception {
+  void shouldRejectConcurrentRequestsWithSameKeyAndDifferentAmounts() throws Exception {
 
     String idempotencyKey = "concurrent-conflict-001";
 
@@ -220,29 +210,27 @@ class TransferServiceIntegrationTest {
     CountDownLatch start = new CountDownLatch(1);
 
     try {
-      Callable<TransferAcceptanceResult> request25 = () -> {
-        ready.countDown();
+      Callable<TransferAcceptanceResult> request25 =
+          () -> {
+            ready.countDown();
 
-        if (!start.await(10, TimeUnit.SECONDS)) {
-          throw new TimeoutException("Timed out waiting to start");
-        }
+            if (!start.await(10, TimeUnit.SECONDS)) {
+              throw new TimeoutException("Timed out waiting to start");
+            }
 
-        return accept(
-            idempotencyKey,
-            new BigDecimal("25.00"));
-      };
+            return accept(idempotencyKey, new BigDecimal("25.00"));
+          };
 
-      Callable<TransferAcceptanceResult> request30 = () -> {
-        ready.countDown();
+      Callable<TransferAcceptanceResult> request30 =
+          () -> {
+            ready.countDown();
 
-        if (!start.await(10, TimeUnit.SECONDS)) {
-          throw new TimeoutException("Timed out waiting to start");
-        }
+            if (!start.await(10, TimeUnit.SECONDS)) {
+              throw new TimeoutException("Timed out waiting to start");
+            }
 
-        return accept(
-            idempotencyKey,
-            new BigDecimal("30.00"));
-      };
+            return accept(idempotencyKey, new BigDecimal("30.00"));
+          };
 
       Future<TransferAcceptanceResult> first = executor.submit(request25);
 
@@ -259,16 +247,12 @@ class TransferServiceIntegrationTest {
         try {
           TransferAcceptanceResult result = future.get(20, TimeUnit.SECONDS);
 
-          assertNull(
-              winner,
-              "Only one request should be accepted");
+          assertNull(winner, "Only one request should be accepted");
 
           winner = result;
 
         } catch (ExecutionException exception) {
-          assertInstanceOf(
-              IdempotencyConflictException.class,
-              exception.getCause());
+          assertInstanceOf(IdempotencyConflictException.class, exception.getCause());
           conflicts++;
         }
       }
@@ -282,13 +266,15 @@ class TransferServiceIntegrationTest {
       assertEquals(1, countIdempotencyRecords());
       assertEquals(1, countOutboxEvents());
 
-      BigDecimal persistedAmount = jdbcTemplate.queryForObject("""
-          SELECT amount
-          FROM transfer_requests
-          WHERE id = ?
-          """,
-          BigDecimal.class,
-          winner.transferId());
+      BigDecimal persistedAmount =
+          jdbcTemplate.queryForObject(
+              """
+              SELECT amount
+              FROM transfer_requests
+              WHERE id = ?
+              """,
+              BigDecimal.class,
+              winner.transferId());
 
       assertTrue(
           persistedAmount.compareTo(new BigDecimal("25.00")) == 0
@@ -298,27 +284,19 @@ class TransferServiceIntegrationTest {
       start.countDown();
       executor.shutdownNow();
 
-      assertTrue(
-          executor.awaitTermination(10, TimeUnit.SECONDS),
-          "Executor did not terminate");
+      assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS), "Executor did not terminate");
     }
   }
 
-  private TransferAcceptanceResult accept(
-      String idempotencyKey,
-      BigDecimal amount) {
+  private TransferAcceptanceResult accept(String idempotencyKey, BigDecimal amount) {
     return acceptTransferUseCase.acceptTransfer(
         new AcceptTransferCommand(
-            clientId,
-            idempotencyKey,
-            fromAccountId,
-            toAccountId,
-            amount,
-            EUR));
+            clientId, idempotencyKey, fromAccountId, toAccountId, amount, EUR));
   }
 
   private void insertAccount(UUID accountId, BigDecimal balance) {
-    jdbcTemplate.update("""
+    jdbcTemplate.update(
+        """
         INSERT INTO accounts (
             id,
             currency,
@@ -335,20 +313,14 @@ class TransferServiceIntegrationTest {
   }
 
   private int countTransfers() {
-    return jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM transfer_requests",
-        Integer.class);
+    return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM transfer_requests", Integer.class);
   }
 
   private int countIdempotencyRecords() {
-    return jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM idempotency_records",
-        Integer.class);
+    return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM idempotency_records", Integer.class);
   }
 
   private int countOutboxEvents() {
-    return jdbcTemplate.queryForObject(
-        "SELECT COUNT(*) FROM outbox_events",
-        Integer.class);
+    return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM outbox_events", Integer.class);
   }
 }

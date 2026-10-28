@@ -10,5 +10,4 @@ public record AcceptTransferCommand(
     UUID fromAccountId,
     UUID toAccountId,
     BigDecimal amount,
-    Currency currency) {
-}
+    Currency currency) {}

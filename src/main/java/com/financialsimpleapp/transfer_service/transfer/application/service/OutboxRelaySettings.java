@@ -19,23 +19,18 @@ public record OutboxRelaySettings(
     if (sendTimeout.isZero() || sendTimeout.isNegative()) {
       throw new IllegalArgumentException("sendTimeout must be positive");
     }
-    if (retryBase.isZero() || retryBase.isNegative()
-        || retryMax.compareTo(retryBase) < 0) {
+    if (retryBase.isZero() || retryBase.isNegative() || retryMax.compareTo(retryBase) < 0) {
       throw new IllegalArgumentException("Invalid retry durations");
     }
   }
 
   /**
-   * The lease must outlast sending a whole batch, otherwise another
-   * instance could claim events that are still being published.
+   * The lease must outlast sending a whole batch, otherwise another instance could claim events
+   * that are still being published.
    */
   public Duration leaseDuration() {
-    Duration minimumLease = sendTimeout
-        .multipliedBy(batchSize)
-        .plusSeconds(30);
+    Duration minimumLease = sendTimeout.multipliedBy(batchSize).plusSeconds(30);
 
-    return lockDuration.compareTo(minimumLease) >= 0
-        ? lockDuration
-        : minimumLease;
+    return lockDuration.compareTo(minimumLease) >= 0 ? lockDuration : minimumLease;
   }
 }

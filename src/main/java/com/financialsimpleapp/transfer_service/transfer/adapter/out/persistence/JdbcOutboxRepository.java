@@ -14,7 +14,8 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class JdbcOutboxRepository implements OutboxRepository {
 
-  private static final String INSERT_TRANSFER_ACCEPTED = """
+  private static final String INSERT_TRANSFER_ACCEPTED =
+      """
       INSERT INTO outbox_events (
           event_id,
           aggregate_id,
@@ -33,7 +34,8 @@ public class JdbcOutboxRepository implements OutboxRepository {
       )
       """;
 
-  private static final String CLAIM_PENDING = """
+  private static final String CLAIM_PENDING =
+      """
       WITH candidates AS (
           SELECT event_id
           FROM outbox_events
@@ -62,7 +64,8 @@ public class JdbcOutboxRepository implements OutboxRepository {
           o.lock_token
       """;
 
-  private static final String MARK_PUBLISHED = """
+  private static final String MARK_PUBLISHED =
+      """
       UPDATE outbox_events
       SET published_at = clock_timestamp(),
           locked_until = NULL,
@@ -72,7 +75,8 @@ public class JdbcOutboxRepository implements OutboxRepository {
         AND published_at IS NULL
       """;
 
-  private static final String SCHEDULE_RETRY = """
+  private static final String SCHEDULE_RETRY =
+      """
       UPDATE outbox_events
       SET attempts = attempts + 1,
           next_attempt_at =
@@ -87,9 +91,7 @@ public class JdbcOutboxRepository implements OutboxRepository {
   private final JdbcTemplate jdbcTemplate;
   private final ObjectMapper objectMapper;
 
-  public JdbcOutboxRepository(
-      JdbcTemplate jdbcTemplate,
-      ObjectMapper objectMapper) {
+  public JdbcOutboxRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
     this.jdbcTemplate = jdbcTemplate;
     this.objectMapper = objectMapper;
   }
@@ -108,8 +110,7 @@ public class JdbcOutboxRepository implements OutboxRepository {
     try {
       return objectMapper.writeValueAsString(event);
     } catch (JsonProcessingException exception) {
-      throw new IllegalStateException(
-          "Could not serialize outbox event", exception);
+      throw new IllegalStateException("Could not serialize outbox event", exception);
     }
   }
 
@@ -117,68 +118,49 @@ public class JdbcOutboxRepository implements OutboxRepository {
   public List<ClaimedOutboxEvent> claimPending(int batchSize, Duration lockDuration) {
 
     if (batchSize <= 0) {
-      throw new IllegalArgumentException(
-          "batchSize must be positive");
+      throw new IllegalArgumentException("batchSize must be positive");
     }
 
-    long lockMillis = positiveMillis(
-        lockDuration, "lockDuration");
+    long lockMillis = positiveMillis(lockDuration, "lockDuration");
 
     return jdbcTemplate.query(
         CLAIM_PENDING,
-        (rs, rowNum) -> new ClaimedOutboxEvent(
-            rs.getObject("event_id", UUID.class),
-            rs.getObject("aggregate_id", UUID.class),
-            rs.getString("event_type"),
-            rs.getString("payload"),
-            rs.getInt("attempts"),
-            rs.getObject("lock_token", UUID.class)),
+        (rs, rowNum) ->
+            new ClaimedOutboxEvent(
+                rs.getObject("event_id", UUID.class),
+                rs.getObject("aggregate_id", UUID.class),
+                rs.getString("event_type"),
+                rs.getString("payload"),
+                rs.getInt("attempts"),
+                rs.getObject("lock_token", UUID.class)),
         batchSize,
         lockMillis);
   }
 
   @Override
-  public boolean markPublished(
-      UUID eventId,
-      UUID lockToken) {
+  public boolean markPublished(UUID eventId, UUID lockToken) {
 
-    return jdbcTemplate.update(
-        MARK_PUBLISHED,
-        eventId,
-        lockToken) == 1;
+    return jdbcTemplate.update(MARK_PUBLISHED, eventId, lockToken) == 1;
   }
 
   @Override
-  public boolean scheduleRetry(
-      UUID eventId,
-      UUID lockToken,
-      Duration delay) {
+  public boolean scheduleRetry(UUID eventId, UUID lockToken, Duration delay) {
 
     long delayMillis = positiveMillis(delay, "delay");
 
-    return jdbcTemplate.update(
-        SCHEDULE_RETRY,
-        delayMillis,
-        eventId,
-        lockToken) == 1;
+    return jdbcTemplate.update(SCHEDULE_RETRY, delayMillis, eventId, lockToken) == 1;
   }
 
-  private static long positiveMillis(
-      Duration duration,
-      String parameterName) {
+  private static long positiveMillis(Duration duration, String parameterName) {
 
-    if (duration == null
-        || duration.isZero()
-        || duration.isNegative()) {
-      throw new IllegalArgumentException(
-          parameterName + " must be positive");
+    if (duration == null || duration.isZero() || duration.isNegative()) {
+      throw new IllegalArgumentException(parameterName + " must be positive");
     }
 
     long millis = duration.toMillis();
 
     if (millis <= 0) {
-      throw new IllegalArgumentException(
-          parameterName + " must be at least 1 millisecond");
+      throw new IllegalArgumentException(parameterName + " must be at least 1 millisecond");
     }
 
     return millis;

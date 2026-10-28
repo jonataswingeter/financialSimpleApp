@@ -5,14 +5,7 @@ import java.util.UUID;
 
 public interface IdempotencyRepository {
 
-  boolean tryCreate(
-      UUID clientId,
-      String idempotencyKey,
-      String requestHash,
-      UUID transferId);
+  boolean tryCreate(UUID clientId, String idempotencyKey, String requestHash, UUID transferId);
 
-  Optional<ExistingIdempotencyRecord> find(
-      UUID clientId,
-      String idempotencyKey);
-
+  Optional<ExistingIdempotencyRecord> find(UUID clientId, String idempotencyKey);
 }

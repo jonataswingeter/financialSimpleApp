@@ -12,9 +12,8 @@ import org.springframework.stereotype.Service;
 /**
  * Relays outbox events to the broker.
  *
- * <p>Deliberately not {@code @Transactional}: the broker must never be
- * called while a database transaction is open. Claiming, marking and
- * rescheduling each run in their own short transaction.
+ * <p>Deliberately not {@code @Transactional}: the broker must never be called while a database
+ * transaction is open. Claiming, marking and rescheduling each run in their own short transaction.
  */
 @Service
 public class OutboxRelayService implements RelayOutboxEventsUseCase {
@@ -39,9 +38,7 @@ public class OutboxRelayService implements RelayOutboxEventsUseCase {
     final List<ClaimedOutboxEvent> events;
 
     try {
-      events = outboxTransactions.claimPending(
-          settings.batchSize(),
-          settings.leaseDuration());
+      events = outboxTransactions.claimPending(settings.batchSize(), settings.leaseDuration());
     } catch (RuntimeException ex) {
       log.error("Failed to claim outbox events", ex);
       return 0;
@@ -74,14 +71,10 @@ public class OutboxRelayService implements RelayOutboxEventsUseCase {
     // O Kafka confirmou o envio. Agora atualizamos o PostgreSQL
     // em uma transação separada.
     try {
-      boolean marked = outboxTransactions.markPublished(
-          event.eventId(),
-          event.lockToken());
+      boolean marked = outboxTransactions.markPublished(event.eventId(), event.lockToken());
 
       if (!marked) {
-        log.warn(
-            "Broker accepted event {}, but its outbox lease was lost",
-            event.eventId());
+        log.warn("Broker accepted event {}, but its outbox lease was lost", event.eventId());
       }
     } catch (RuntimeException databaseException) {
       // Não agendamos uma retentativa imediata aqui:
@@ -97,16 +90,13 @@ public class OutboxRelayService implements RelayOutboxEventsUseCase {
   }
 
   private void scheduleRetryAfterPublishFailure(
-      ClaimedOutboxEvent event,
-      RuntimeException exception) {
+      ClaimedOutboxEvent event, RuntimeException exception) {
 
     Duration delay = retryDelay(event.attempts());
 
     try {
-      boolean scheduled = outboxTransactions.scheduleRetry(
-          event.eventId(),
-          event.lockToken(),
-          delay);
+      boolean scheduled =
+          outboxTransactions.scheduleRetry(event.eventId(), event.lockToken(), delay);
 
       if (scheduled) {
         log.warn(
@@ -121,10 +111,7 @@ public class OutboxRelayService implements RelayOutboxEventsUseCase {
             exception);
       }
     } catch (RuntimeException retryException) {
-      log.error(
-          "Failed to schedule retry for event {}",
-          event.eventId(),
-          retryException);
+      log.error("Failed to schedule retry for event {}", event.eventId(), retryException);
     }
   }
 

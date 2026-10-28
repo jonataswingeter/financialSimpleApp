@@ -18,9 +18,7 @@ public class OutboxTransactionService {
   }
 
   @Transactional
-  public List<ClaimedOutboxEvent> claimPending(
-      int batchSize,
-      Duration lockDuration) {
+  public List<ClaimedOutboxEvent> claimPending(int batchSize, Duration lockDuration) {
     return outboxRepository.claimPending(batchSize, lockDuration);
   }
 
@@ -30,10 +28,7 @@ public class OutboxTransactionService {
   }
 
   @Transactional
-  public boolean scheduleRetry(
-      UUID eventId,
-      UUID lockToken,
-      Duration delay) {
+  public boolean scheduleRetry(UUID eventId, UUID lockToken, Duration delay) {
     return outboxRepository.scheduleRetry(eventId, lockToken, delay);
   }
 }

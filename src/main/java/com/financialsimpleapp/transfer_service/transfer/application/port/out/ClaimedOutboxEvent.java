@@ -8,5 +8,4 @@ public record ClaimedOutboxEvent(
     String eventType,
     String payload,
     int attempts,
-    UUID lockToken) {
-}
+    UUID lockToken) {}

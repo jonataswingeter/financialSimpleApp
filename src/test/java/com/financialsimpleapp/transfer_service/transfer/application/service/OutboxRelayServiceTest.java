@@ -1,28 +1,28 @@
 package com.financialsimpleapp.transfer_service.transfer.application.service;
 
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.ClaimedOutboxEvent;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.EventPublishingException;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferEventPublisher;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
-import java.time.Duration;
-import java.util.List;
-import java.util.UUID;
-
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.*;
 
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.ClaimedOutboxEvent;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.EventPublishingException;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferEventPublisher;
+import java.time.Duration;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
 class OutboxRelayServiceTest {
 
-  private static final OutboxRelaySettings SETTINGS = new OutboxRelaySettings(
-      10,
-      Duration.ofMinutes(5),
-      Duration.ofSeconds(1),
-      Duration.ofSeconds(1),
-      Duration.ofSeconds(10));
+  private static final OutboxRelaySettings SETTINGS =
+      new OutboxRelaySettings(
+          10,
+          Duration.ofMinutes(5),
+          Duration.ofSeconds(1),
+          Duration.ofSeconds(1),
+          Duration.ofSeconds(10));
 
   private OutboxTransactionService outboxTransactions;
   private TransferEventPublisher eventPublisher;
@@ -57,14 +57,15 @@ class OutboxRelayServiceTest {
     ClaimedOutboxEvent event = event(2);
     givenClaimed(event);
     doThrow(new EventPublishingException("broker down", null))
-        .when(eventPublisher).publish(any(), any());
+        .when(eventPublisher)
+        .publish(any(), any());
     when(outboxTransactions.scheduleRetry(any(), any(), any())).thenReturn(true);
 
     int published = relay.relayPendingEvents();
 
     assertEquals(0, published);
-    verify(outboxTransactions).scheduleRetry(
-        event.eventId(), event.lockToken(), Duration.ofSeconds(4));
+    verify(outboxTransactions)
+        .scheduleRetry(event.eventId(), event.lockToken(), Duration.ofSeconds(4));
     verify(outboxTransactions, never()).markPublished(any(), any());
   }
 
@@ -74,7 +75,8 @@ class OutboxRelayServiceTest {
     ClaimedOutboxEvent healthy = event(0);
     givenClaimed(failing, healthy);
     doThrow(new EventPublishingException("broker down", null))
-        .when(eventPublisher).publish(failing.transferId(), failing.payload());
+        .when(eventPublisher)
+        .publish(failing.transferId(), failing.payload());
     when(outboxTransactions.markPublished(any(), any())).thenReturn(true);
 
     int published = relay.relayPendingEvents();
@@ -125,20 +127,20 @@ class OutboxRelayServiceTest {
 
   @Test
   void shouldExtendLeaseWhenConfiguredLockIsTooShort() {
-    OutboxRelaySettings settings = new OutboxRelaySettings(
-        100,
-        Duration.ofSeconds(30),
-        Duration.ofSeconds(10),
-        Duration.ofSeconds(1),
-        Duration.ofMinutes(5));
+    OutboxRelaySettings settings =
+        new OutboxRelaySettings(
+            100,
+            Duration.ofSeconds(30),
+            Duration.ofSeconds(10),
+            Duration.ofSeconds(1),
+            Duration.ofMinutes(5));
 
     // 100 events * 10s send timeout + 30s safety margin.
     assertEquals(Duration.ofSeconds(1_030), settings.leaseDuration());
   }
 
   private void givenClaimed(ClaimedOutboxEvent... events) {
-    when(outboxTransactions.claimPending(anyInt(), any()))
-        .thenReturn(List.of(events));
+    when(outboxTransactions.claimPending(anyInt(), any())).thenReturn(List.of(events));
   }
 
   private static ClaimedOutboxEvent event(int attempts) {
@@ -150,7 +152,9 @@ class OutboxRelayServiceTest {
         transferId,
         "TRANSFER_ACCEPTED",
         """
-            {"eventId":"%s","transferId":"%s"}""".formatted(eventId, transferId),
+        {"eventId":"%s","transferId":"%s"}\
+        """
+            .formatted(eventId, transferId),
         attempts,
         UUID.randomUUID());
   }

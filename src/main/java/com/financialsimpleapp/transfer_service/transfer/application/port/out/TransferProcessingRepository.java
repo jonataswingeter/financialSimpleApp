@@ -13,9 +13,7 @@ public interface TransferProcessingRepository {
   Optional<Transfer> lockTransfer(UUID transferId);
 
   /** Loads the accounts that exist and locks them in a stable order. */
-  List<Account> lockAccounts(
-      UUID sourceAccountId,
-      UUID destinationAccountId);
+  List<Account> lockAccounts(UUID sourceAccountId, UUID destinationAccountId);
 
   /** Persists a COMPLETED or REJECTED transfer that was ACCEPTED. */
   void saveOutcome(Transfer transfer);

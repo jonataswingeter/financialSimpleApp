@@ -1,15 +1,12 @@
 package com.financialsimpleapp.transfer_service.transfer.application.port.in;
 
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
-
 import java.time.Instant;
 import java.util.UUID;
 
 public record TransferStatusResult(
-        UUID transferId,
-        TransferStatus status,
-        String rejectionCode,
-        Instant createdAt,
-        Instant completedAt
-) {
-}
+    UUID transferId,
+    TransferStatus status,
+    String rejectionCode,
+    Instant createdAt,
+    Instant completedAt) {}

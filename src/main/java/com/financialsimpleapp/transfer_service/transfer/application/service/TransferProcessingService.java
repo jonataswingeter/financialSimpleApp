@@ -19,30 +19,26 @@ public class TransferProcessingService implements ProcessTransferUseCase {
 
   private final TransferProcessingRepository repository;
 
-  public TransferProcessingService(
-      TransferProcessingRepository repository) {
+  public TransferProcessingService(TransferProcessingRepository repository) {
     this.repository = repository;
   }
 
   @Override
   @Transactional
   public void process(UUID transferId) {
-    Transfer transfer = repository.lockTransfer(transferId)
-        .orElseThrow(() -> new IllegalStateException(
-            "Transfer does not exist: " + transferId));
+    Transfer transfer =
+        repository
+            .lockTransfer(transferId)
+            .orElseThrow(() -> new IllegalStateException("Transfer does not exist: " + transferId));
 
     // Kafka may deliver the same event more than once.
     if (transfer.isFinal()) {
       return;
     }
 
-    Map<UUID, Account> accounts = repository.lockAccounts(
-            transfer.getFromAccountId(),
-            transfer.getToAccountId())
-        .stream()
-        .collect(Collectors.toMap(
-            Account::getId,
-            Function.identity()));
+    Map<UUID, Account> accounts =
+        repository.lockAccounts(transfer.getFromAccountId(), transfer.getToAccountId()).stream()
+            .collect(Collectors.toMap(Account::getId, Function.identity()));
 
     Account source = accounts.get(transfer.getFromAccountId());
     Account destination = accounts.get(transfer.getToAccountId());

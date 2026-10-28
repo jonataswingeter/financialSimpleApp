@@ -9,16 +9,9 @@ public interface OutboxRepository {
 
   void insertTransferAccepted(TransferAcceptedEvent event);
 
-  List<ClaimedOutboxEvent> claimPending(
-      int batchSize,
-      Duration lockDuration);
+  List<ClaimedOutboxEvent> claimPending(int batchSize, Duration lockDuration);
 
-  boolean markPublished(
-      UUID eventId,
-      UUID lockToken);
+  boolean markPublished(UUID eventId, UUID lockToken);
 
-  boolean scheduleRetry(
-      UUID eventId,
-      UUID lockToken,
-      Duration delay);
+  boolean scheduleRetry(UUID eventId, UUID lockToken, Duration delay);
 }
