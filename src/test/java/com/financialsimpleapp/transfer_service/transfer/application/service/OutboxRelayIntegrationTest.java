@@ -4,14 +4,19 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 
 import com.financialsimpleapp.transfer_service.TestcontainersConfiguration;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.RelayOutboxEventsUseCase;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.ClaimedOutboxEvent;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.EventPublishingException;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferEventPublisher;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
+import java.sql.Timestamp;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -39,7 +44,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 /**
  * Verifies the outbox claim/lease protocol against real PostgreSQL: leases keep an event with one
  * relay instance, an expired lease hands it to another, a stale instance cannot overwrite the new
- * owner's outcome, and concurrent relays never publish the same event twice.
+ * owner's outcome, concurrent relays never publish the same event twice, and failed sends back off
+ * exponentially via next_attempt_at.
  *
  * <p>The broker is replaced by a mock that counts sends per transfer; the scheduled relay is
  * disabled (test default), so every relay run here is explicit.
@@ -213,6 +219,102 @@ class OutboxRelayIntegrationTest {
   }
 
   // ---------------------------------------------------------------------------------------------
+  // #8 Retry backoff stored in the database
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Every failed send stores the next attempt time in the row itself, so the backoff survives
+   * restarts and applies to every relay instance. Delays follow the configured defaults: retry-base
+   * 1s, doubling per attempt, capped at retry-max 5m.
+   */
+  @Test
+  void shouldBackOffExponentiallyBetweenFailedSendsAndPublishOnceTheBrokerRecovers() {
+    doThrow(new EventPublishingException("Simulated broker outage", null))
+        .when(eventPublisher)
+        .publish(any(UUID.class), anyString());
+
+    TransferAcceptedEvent event = insertEvent();
+
+    assertRetryScheduledAfterFailedRelay(event.eventId(), 1, Duration.ofSeconds(1));
+
+    // Backing off: no relay instance may pick the event up before its next attempt time.
+    assertTrue(outboxRepository.claimPending(10, LEASE).isEmpty());
+    assertEquals(0, relayOutboxEvents.relayPendingEvents());
+
+    makeDue(event.eventId());
+    assertRetryScheduledAfterFailedRelay(event.eventId(), 2, Duration.ofSeconds(2));
+
+    makeDue(event.eventId());
+    assertRetryScheduledAfterFailedRelay(event.eventId(), 3, Duration.ofSeconds(4));
+
+    // The broker is back.
+    doNothing().when(eventPublisher).publish(any(UUID.class), anyString());
+    makeDue(event.eventId());
+
+    assertEquals(1, relayOutboxEvents.relayPendingEvents());
+    assertPublishedAndReleased(event.eventId());
+    assertEquals(3, outboxRow(event.eventId()).get("attempts"), "A success is not an attempt");
+  }
+
+  @Test
+  void shouldCapTheBackoffAtTheConfiguredMaximum() {
+    doThrow(new EventPublishingException("Simulated broker outage", null))
+        .when(eventPublisher)
+        .publish(any(UUID.class), anyString());
+
+    TransferAcceptedEvent event = insertEvent();
+    // A long outage: 2^30 seconds would be decades.
+    jdbcTemplate.update(
+        "UPDATE outbox_events SET attempts = 30 WHERE event_id = ?", event.eventId());
+
+    assertRetryScheduledAfterFailedRelay(event.eventId(), 31, Duration.ofMinutes(5));
+  }
+
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Runs one relay that fails to send, and checks the stored retry: attempts incremented, lease
+   * released, and next_attempt_at exactly {@code delay} after the failure (bracketed by the
+   * database clock before and after the relay).
+   */
+  private void assertRetryScheduledAfterFailedRelay(
+      UUID eventId, int expectedAttempts, Duration delay) {
+    Instant before = databaseNow();
+    assertEquals(0, relayOutboxEvents.relayPendingEvents());
+    Instant after = databaseNow();
+
+    Map<String, Object> row = outboxRow(eventId);
+    assertNull(row.get("published_at"));
+    assertNull(row.get("lock_token"), "A failed send must release the lease");
+    assertEquals(expectedAttempts, row.get("attempts"));
+
+    Instant nextAttempt = ((Timestamp) row.get("next_attempt_at")).toInstant();
+    assertFalse(
+        nextAttempt.isBefore(before.plus(delay)) || nextAttempt.isAfter(after.plus(delay)),
+        "Expected next attempt "
+            + delay
+            + " after the failure, between "
+            + before.plus(delay)
+            + " and "
+            + after.plus(delay)
+            + ", but was "
+            + nextAttempt);
+  }
+
+  /** Simulates the backoff delay passing, without sleeping. */
+  private void makeDue(UUID eventId) {
+    jdbcTemplate.update(
+        """
+        UPDATE outbox_events
+        SET next_attempt_at = clock_timestamp() - interval '1 second'
+        WHERE event_id = ?
+        """,
+        eventId);
+  }
+
+  private Instant databaseNow() {
+    return jdbcTemplate.queryForObject("SELECT clock_timestamp()", Timestamp.class).toInstant();
+  }
 
   private TransferAcceptedEvent insertEvent() {
     TransferAcceptedEvent event = new TransferAcceptedEvent(UUID.randomUUID(), UUID.randomUUID());
@@ -237,7 +339,7 @@ class OutboxRelayIntegrationTest {
   private Map<String, Object> outboxRow(UUID eventId) {
     return jdbcTemplate.queryForMap(
         """
-        SELECT published_at, attempts, locked_until, lock_token
+        SELECT published_at, attempts, next_attempt_at, locked_until, lock_token
         FROM outbox_events
         WHERE event_id = ?
         """,

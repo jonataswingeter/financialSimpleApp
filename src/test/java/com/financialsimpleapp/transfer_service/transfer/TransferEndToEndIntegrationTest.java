@@ -6,11 +6,14 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.financialsimpleapp.transfer_service.TestcontainersConfiguration;
 import com.financialsimpleapp.transfer_service.transfer.adapter.in.web.TransferAcceptanceResponse;
 import com.financialsimpleapp.transfer_service.transfer.adapter.in.web.TransferRequest;
@@ -18,15 +21,25 @@ import com.financialsimpleapp.transfer_service.transfer.adapter.in.web.TransferS
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.ProcessTransferUseCase;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.EventPublishingException;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferEventPublisher;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferProcessingRepository;
+import com.financialsimpleapp.transfer_service.transfer.domain.LedgerEntry;
+import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 import java.math.BigDecimal;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.sql.Timestamp;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.common.header.Header;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,7 +49,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.client.RestTestClient;
 
@@ -75,6 +90,12 @@ class TransferEndToEndIntegrationTest {
   @MockitoSpyBean private TransferEventPublisher eventPublisher;
 
   @MockitoSpyBean private ProcessTransferUseCase processTransferUseCase;
+
+  @MockitoSpyBean private TransferProcessingRepository processingRepository;
+
+  @Autowired private ConsumerFactory<String, String> consumerFactory;
+
+  @Autowired private ObjectMapper objectMapper;
 
   private final UUID clientId = UUID.randomUUID();
   private final UUID fromAccountId = UUID.randomUUID();
@@ -258,6 +279,180 @@ class TransferEndToEndIntegrationTest {
     assertEquals(2, countLedgerEntries(transferId));
   }
 
+  /**
+   * A business rule violation is a normal outcome, not a failure: the event is still published and
+   * consumed, and the transfer ends REJECTED with its reason and no money moved.
+   */
+  @Test
+  void shouldRejectTransferWithoutMovingMoneyWhenFundsAreInsufficient() {
+    UUID transferId = acceptViaApi("insufficient-funds-001", "1000.01");
+
+    TransferStatusResponse rejected = awaitStatus(transferId, TransferStatus.REJECTED);
+
+    assertEquals("INSUFFICIENT_FUNDS", rejected.rejectionCode());
+    assertNull(rejected.completedAt());
+    assertNothingMoved(transferId);
+    assertEventPublished(transferId);
+  }
+
+  /** Account rules are checked when the transfer is processed, not when it is accepted. */
+  @Test
+  void shouldRejectTransferWhenSourceAccountWasBlockedAfterAcceptance() {
+    // Hold the event in the outbox (the broker is "down") until the account is blocked.
+    AtomicBoolean accountBlocked = new AtomicBoolean();
+    doAnswer(
+            invocation -> {
+              if (!accountBlocked.get()) {
+                throw new EventPublishingException("Simulated broker outage", null);
+              }
+              return invocation.callRealMethod();
+            })
+        .when(eventPublisher)
+        .publish(any(UUID.class), anyString());
+
+    UUID transferId = acceptViaApi("blocked-source-001", "25.00");
+    jdbcTemplate.update("UPDATE accounts SET status = 'BLOCKED' WHERE id = ?", fromAccountId);
+    accountBlocked.set(true);
+
+    TransferStatusResponse rejected = awaitStatus(transferId, TransferStatus.REJECTED);
+
+    assertEquals("SOURCE_ACCOUNT_NOT_ACTIVE", rejected.rejectionCode());
+    assertNothingMoved(transferId);
+  }
+
+  /**
+   * Processing fails halfway: the source is debited, its balance saved and the debit ledger entry
+   * written, then writing the credit fails. The whole transaction must roll back, so Kafka's retry
+   * starts from a clean state and moves the money exactly once. Without the rollback the retry
+   * would debit twice and hit the unique (transfer_id, entry_type) ledger constraint forever.
+   */
+  @Test
+  void shouldRollBackPartialProcessingAndCompleteOnKafkaRetry() {
+    doCallRealMethod()
+        .doThrow(new IllegalStateException("Simulated database failure"))
+        .doCallRealMethod()
+        .when(processingRepository)
+        .insertLedgerEntry(any(LedgerEntry.class));
+
+    UUID transferId = acceptViaApi("partial-failure-001", "25.00");
+    awaitStatus(transferId, TransferStatus.COMPLETED);
+
+    // The first delivery failed, the redelivery succeeded.
+    verify(processTransferUseCase, times(2)).process(transferId);
+    verify(processingRepository, times(4)).insertLedgerEntry(any(LedgerEntry.class));
+
+    assertBalance(fromAccountId, "975.00");
+    assertBalance(toAccountId, "525.00");
+    assertEquals(2, countLedgerEntries(transferId));
+  }
+
+  /**
+   * A message that can never be processed (here: not even JSON) must not block its partition. After
+   * the retries it is parked in the dead-letter topic with the failure attached, and later
+   * transfers on the same partitions are still processed.
+   */
+  @Test
+  void shouldParkUnreadableMessageInDeadLetterTopicAndKeepConsuming() throws Exception {
+    String key = "poison-" + UUID.randomUUID();
+    int partitions = kafkaTemplate.partitionsFor(topic).size();
+
+    // One poison message in front of every partition, so the next transfer queues behind one.
+    for (int partition = 0; partition < partitions; partition++) {
+      kafkaTemplate.send(topic, partition, key, "{not json").get(10, TimeUnit.SECONDS);
+    }
+
+    UUID transferId = acceptViaApi("after-poison-001", "25.00");
+    awaitStatus(transferId, TransferStatus.COMPLETED);
+
+    List<ConsumerRecord<String, String>> parked = awaitDeadLetters(key, partitions);
+
+    for (ConsumerRecord<String, String> record : parked) {
+      assertEquals("{not json", record.value());
+      assertEquals(topic, header(record, KafkaHeaders.DLT_ORIGINAL_TOPIC));
+      assertEquals(
+          JsonParseException.class.getName(),
+          header(record, KafkaHeaders.DLT_EXCEPTION_CAUSE_FQCN));
+    }
+
+    assertBalance(fromAccountId, "975.00");
+    assertBalance(toAccountId, "525.00");
+  }
+
+  /**
+   * A well-formed event for a transfer that does not exist fails on every attempt; it ends up in
+   * the dead-letter topic instead of being retried forever.
+   */
+  @Test
+  void shouldParkEventForUnknownTransferInDeadLetterTopic() throws Exception {
+    UUID unknownTransferId = UUID.randomUUID();
+    String payload =
+        objectMapper.writeValueAsString(
+            new TransferAcceptedEvent(UUID.randomUUID(), unknownTransferId));
+
+    kafkaTemplate.send(topic, unknownTransferId.toString(), payload).get(10, TimeUnit.SECONDS);
+
+    ConsumerRecord<String, String> parked =
+        awaitDeadLetters(unknownTransferId.toString(), 1).getFirst();
+
+    assertEquals(payload, parked.value());
+    assertEquals(
+        IllegalStateException.class.getName(),
+        header(parked, KafkaHeaders.DLT_EXCEPTION_CAUSE_FQCN));
+    assertTrue(
+        header(parked, KafkaHeaders.DLT_EXCEPTION_MESSAGE).contains(unknownTransferId.toString()));
+
+    // Initial delivery plus the error handler's 3 retries.
+    verify(processTransferUseCase, times(4)).process(unknownTransferId);
+  }
+
+  /** Reads the dead-letter topic from the beginning until {@code expected} records with the key. */
+  private List<ConsumerRecord<String, String>> awaitDeadLetters(String key, int expected) {
+    List<ConsumerRecord<String, String>> found = new ArrayList<>();
+
+    try (Consumer<String, String> consumer =
+        consumerFactory.createConsumer("dlt-reader-" + UUID.randomUUID(), null)) {
+      consumer.subscribe(List.of(topic + ".DLT"));
+
+      await()
+          .atMost(PROCESSING_TIMEOUT)
+          .until(
+              () -> {
+                consumer
+                    .poll(Duration.ofMillis(500))
+                    .forEach(
+                        record -> {
+                          if (key.equals(record.key())) {
+                            found.add(record);
+                          }
+                        });
+                return found.size() >= expected;
+              });
+    }
+
+    assertEquals(expected, found.size(), "Unexpected dead letters for key " + key);
+    return found;
+  }
+
+  private static String header(ConsumerRecord<String, String> record, String name) {
+    Header header = record.headers().lastHeader(name);
+    assertNotNull(header, "Missing header " + name);
+    return new String(header.value(), StandardCharsets.UTF_8);
+  }
+
+  private void assertNothingMoved(UUID transferId) {
+    assertBalance(fromAccountId, "1000.00");
+    assertBalance(toAccountId, "500.00");
+    assertEquals(0, countLedgerEntries(transferId));
+  }
+
+  private void assertEventPublished(UUID transferId) {
+    assertNotNull(
+        jdbcTemplate.queryForObject(
+            "SELECT published_at FROM outbox_events WHERE aggregate_id = ?",
+            Timestamp.class,
+            transferId));
+  }
+
   private UUID acceptViaApi(String idempotencyKey, String amount) {
     TransferAcceptanceResponse accepted =
         restTestClient
@@ -277,11 +472,11 @@ class TransferEndToEndIntegrationTest {
     return accepted.transferId();
   }
 
-  private void awaitStatus(UUID transferId, TransferStatus expected) {
-    await()
+  private TransferStatusResponse awaitStatus(UUID transferId, TransferStatus expected) {
+    return await()
         .atMost(PROCESSING_TIMEOUT)
         .pollInterval(Duration.ofMillis(200))
-        .until(() -> getTransfer(transferId).status() == expected);
+        .until(() -> getTransfer(transferId), status -> status.status() == expected);
   }
 
   private int countLedgerEntries(UUID transferId) {
