@@ -430,7 +430,7 @@ class OutboxRelayIntegrationTest {
 
   private TransferAcceptedEvent insertEvent() {
     TransferAcceptedEvent event = new TransferAcceptedEvent(UUID.randomUUID(), UUID.randomUUID());
-    outboxRepository.insertTransferAccepted(event);
+    outboxRepository.append(event);
     return event;
   }
 

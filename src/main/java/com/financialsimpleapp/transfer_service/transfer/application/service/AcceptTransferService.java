@@ -8,10 +8,9 @@ import com.financialsimpleapp.transfer_service.transfer.application.port.out.Exi
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.IdempotencyRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferRepository;
+import com.financialsimpleapp.transfer_service.transfer.domain.Money;
 import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
-import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
-import java.math.BigDecimal;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -44,25 +43,24 @@ public class AcceptTransferService implements AcceptTransferUseCase {
     Objects.requireNonNull(clientId, "Client ID is required");
     TransferSupport.validateIdempotencyKey(idempotencyKey);
 
-    BigDecimal normalizedAmount = TransferSupport.normalizeAmount(command.amount());
-
     Transfer transfer =
-        new Transfer(
+        Transfer.accept(
             UUID.randomUUID(),
+            clientId,
             command.fromAccountId(),
             command.toAccountId(),
-            normalizedAmount,
-            command.currency());
+            new Money(command.amount(), command.currency()));
 
+    Money amount = transfer.getAmount();
     String requestHash =
         TransferSupport.calculateRequestHash(
             transfer.getFromAccountId(),
             transfer.getToAccountId(),
-            transfer.getAmount(),
-            transfer.getCurrency().getCurrencyCode());
+            amount.amount(),
+            amount.currency().getCurrencyCode());
 
     // 1. Persist the candidate transfer.
-    transferRepository.insert(clientId, transfer);
+    transferRepository.insert(transfer);
 
     // 2. Atomically reserve the idempotency key.
     boolean reserved =
@@ -87,9 +85,8 @@ public class AcceptTransferService implements AcceptTransferUseCase {
       return new TransferAcceptanceResult(existing.transferId(), existing.status(), true);
     }
 
-    // 4. Persist the event in the same database transaction.
-    outboxRepository.insertTransferAccepted(
-        new TransferAcceptedEvent(UUID.randomUUID(), transfer.getId()));
+    // 4. Store the events the transfer recorded, in the same database transaction.
+    transfer.pullEvents().forEach(outboxRepository::append);
 
     return new TransferAcceptanceResult(transfer.getId(), TransferStatus.ACCEPTED, false);
   }

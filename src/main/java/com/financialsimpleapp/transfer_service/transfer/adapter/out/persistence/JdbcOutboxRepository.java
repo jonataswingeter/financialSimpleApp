@@ -4,7 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.ClaimedOutboxEvent;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
-import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
+import com.financialsimpleapp.transfer_service.transfer.domain.TransferEvent;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
@@ -14,7 +14,7 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class JdbcOutboxRepository implements OutboxRepository {
 
-  private static final String INSERT_TRANSFER_ACCEPTED =
+  private static final String INSERT_EVENT =
       """
       INSERT INTO outbox_events (
           event_id,
@@ -97,13 +97,9 @@ public class JdbcOutboxRepository implements OutboxRepository {
   }
 
   @Override
-  public void insertTransferAccepted(TransferAcceptedEvent event) {
+  public void append(TransferEvent event) {
     jdbcTemplate.update(
-        INSERT_TRANSFER_ACCEPTED,
-        event.eventId(),
-        event.transferId(),
-        TransferAcceptedEvent.TYPE,
-        toJson(event));
+        INSERT_EVENT, event.eventId(), event.transferId(), event.type(), toJson(event));
   }
 
   private String toJson(Object event) {

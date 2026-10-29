@@ -20,8 +20,8 @@ import com.financialsimpleapp.transfer_service.transfer.adapter.in.web.TransferR
 import com.financialsimpleapp.transfer_service.transfer.adapter.in.web.TransferStatusResponse;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.ProcessTransferUseCase;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.EventPublishingException;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.LedgerRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferEventPublisher;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferProcessingRepository;
 import com.financialsimpleapp.transfer_service.transfer.domain.LedgerEntry;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
@@ -93,7 +93,7 @@ class TransferEndToEndIntegrationTest {
 
   @MockitoSpyBean private ProcessTransferUseCase processTransferUseCase;
 
-  @MockitoSpyBean private TransferProcessingRepository processingRepository;
+  @MockitoSpyBean private LedgerRepository ledgerRepository;
 
   @Autowired private ConsumerFactory<String, String> consumerFactory;
 
@@ -190,6 +190,19 @@ class TransferEndToEndIntegrationTest {
             transferId);
 
     assertEquals("TRANSFER_ACCEPTED", outboxEvent.get("event_type"));
+
+    // The wire contract: exactly these fields, so existing consumers keep working.
+    assertEquals(
+        List.of("eventId", "transferId"),
+        jdbcTemplate.queryForList(
+            """
+            SELECT jsonb_object_keys(payload) AS field
+            FROM outbox_events
+            WHERE aggregate_id = ?
+            ORDER BY field
+            """,
+            String.class,
+            transferId));
     assertNotNull(outboxEvent.get("published_at"));
     assertNull(outboxEvent.get("locked_until"));
     assertNull(outboxEvent.get("lock_token"));
@@ -345,15 +358,15 @@ class TransferEndToEndIntegrationTest {
     doCallRealMethod()
         .doThrow(new IllegalStateException("Simulated database failure"))
         .doCallRealMethod()
-        .when(processingRepository)
-        .insertLedgerEntry(any(LedgerEntry.class));
+        .when(ledgerRepository)
+        .append(any(LedgerEntry.class));
 
     UUID transferId = acceptViaApi("partial-failure-001", "25.00");
     awaitStatus(transferId, TransferStatus.COMPLETED);
 
     // The first delivery failed, the redelivery succeeded.
     verify(processTransferUseCase, times(2)).process(transferId);
-    verify(processingRepository, times(4)).insertLedgerEntry(any(LedgerEntry.class));
+    verify(ledgerRepository, times(4)).append(any(LedgerEntry.class));
 
     assertBalance(fromAccountId, "975.00");
     assertBalance(toAccountId, "525.00");

@@ -1,7 +1,6 @@
 package com.financialsimpleapp.transfer_service.transfer.application.service;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -18,19 +17,6 @@ public final class TransferSupport {
     if (key == null || key.isBlank() || key.length() > 255) {
       throw new IllegalArgumentException(
           "Idempotency key must contain between 1 and 255 characters");
-    }
-  }
-
-  public static BigDecimal normalizeAmount(BigDecimal amount) {
-    if (amount == null) {
-      throw new IllegalArgumentException("Amount is required");
-    }
-
-    try {
-      return amount.setScale(2, RoundingMode.UNNECESSARY);
-    } catch (ArithmeticException exception) {
-      throw new IllegalArgumentException(
-          "Amount cannot have more than 2 decimal places", exception);
     }
   }
 

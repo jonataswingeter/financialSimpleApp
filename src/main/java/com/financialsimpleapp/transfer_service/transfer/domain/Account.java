@@ -1,24 +1,26 @@
 package com.financialsimpleapp.transfer_service.transfer.domain;
 
-import java.math.BigDecimal;
 import java.util.Currency;
 import java.util.Objects;
 import java.util.UUID;
 
+/**
+ * This bounded context's view of an account: just what a transfer needs (currency, balance,
+ * status). The account's currency is the currency of its balance.
+ */
 public class Account {
 
   private final UUID id;
-  private final Currency currency;
   private final AccountStatus status;
-  private BigDecimal balance;
 
-  public Account(UUID id, Currency currency, BigDecimal balance, AccountStatus status) {
+  private Money balance;
+
+  public Account(UUID id, Money balance, AccountStatus status) {
     this.id = Objects.requireNonNull(id, "Account ID is required");
-    this.currency = Objects.requireNonNull(currency, "Currency is required");
     this.balance = Objects.requireNonNull(balance, "Balance is required");
     this.status = Objects.requireNonNull(status, "Status is required");
 
-    if (balance.signum() < 0) {
+    if (balance.isNegative()) {
       throw new IllegalArgumentException("Balance cannot be negative");
     }
   }
@@ -27,11 +29,11 @@ public class Account {
     return status == AccountStatus.ACTIVE;
   }
 
-  public boolean hasFunds(BigDecimal amount) {
-    return balance.compareTo(amount) >= 0;
+  public boolean hasFunds(Money amount) {
+    return balance.isAtLeast(amount);
   }
 
-  public void debit(BigDecimal amount) {
+  public void debit(Money amount) {
     requirePositive(amount);
     requireActive();
 
@@ -39,14 +41,14 @@ public class Account {
       throw new IllegalStateException("Insufficient funds in account " + id);
     }
 
-    balance = balance.subtract(amount);
+    balance = balance.minus(amount);
   }
 
-  public void credit(BigDecimal amount) {
+  public void credit(Money amount) {
     requirePositive(amount);
     requireActive();
 
-    balance = balance.add(amount);
+    balance = balance.plus(amount);
   }
 
   private void requireActive() {
@@ -55,8 +57,8 @@ public class Account {
     }
   }
 
-  private static void requirePositive(BigDecimal amount) {
-    if (amount == null || amount.signum() <= 0) {
+  private static void requirePositive(Money amount) {
+    if (amount == null || !amount.isPositive()) {
       throw new IllegalArgumentException("Amount must be positive");
     }
   }
@@ -66,10 +68,10 @@ public class Account {
   }
 
   public Currency getCurrency() {
-    return currency;
+    return balance.currency();
   }
 
-  public BigDecimal getBalance() {
+  public Money getBalance() {
     return balance;
   }
 

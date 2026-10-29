@@ -1,52 +1,52 @@
 package com.financialsimpleapp.transfer_service.transfer.domain;
 
-import java.math.BigDecimal;
-import java.util.Currency;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
+/**
+ * Aggregate root of a transfer request. Created by {@link #accept}, which records a {@link
+ * TransferAcceptedEvent}; later loaded with {@link #restore} and finished by {@link #execute} or
+ * {@link #rejectForMissingAccount}.
+ *
+ * <p>Status flow: ACCEPTED -> (PROCESSING) -> COMPLETED | REJECTED. PROCESSING only exists inside
+ * {@link #execute}; it is never persisted.
+ */
 public class Transfer {
 
   private final UUID id;
+  private final UUID clientId;
   private final UUID fromAccountId;
   private final UUID toAccountId;
-  private final BigDecimal amount;
-  private final Currency currency;
+  private final Money amount;
 
   private TransferStatus status;
   private RejectionReason rejectionReason;
 
-  public Transfer(
-      UUID id, UUID fromAccountId, UUID toAccountId, BigDecimal amount, Currency currency) {
-    this(id, fromAccountId, toAccountId, amount, currency, TransferStatus.ACCEPTED, null);
-  }
+  private final List<TransferEvent> events = new ArrayList<>();
 
   private Transfer(
       UUID id,
+      UUID clientId,
       UUID fromAccountId,
       UUID toAccountId,
-      BigDecimal amount,
-      Currency currency,
+      Money amount,
       TransferStatus status,
       RejectionReason rejectionReason) {
     this.id = Objects.requireNonNull(id, "Transfer ID is required");
+    this.clientId = Objects.requireNonNull(clientId, "Client ID is required");
     this.fromAccountId = Objects.requireNonNull(fromAccountId, "Source account ID is required");
     this.toAccountId = Objects.requireNonNull(toAccountId, "Destination account ID is required");
     this.amount = Objects.requireNonNull(amount, "Amount is required");
-    this.currency = Objects.requireNonNull(currency, "Currency is required");
     this.status = Objects.requireNonNull(status, "Status is required");
 
     if (fromAccountId.equals(toAccountId)) {
       throw new IllegalArgumentException("Source and destination accounts must be different");
     }
 
-    if (amount.signum() <= 0) {
+    if (!amount.isPositive()) {
       throw new IllegalArgumentException("Transfer amount must be positive");
-    }
-
-    if (amount.scale() > 2) {
-      throw new IllegalArgumentException("Transfer amount cannot have more than 2 decimal places");
     }
 
     if ((status == TransferStatus.REJECTED) != (rejectionReason != null)) {
@@ -56,16 +56,35 @@ public class Transfer {
     this.rejectionReason = rejectionReason;
   }
 
-  /** Rebuilds a transfer that was already persisted. */
+  /** Accepts a new transfer request and records the event that will trigger its processing. */
+  public static Transfer accept(
+      UUID id, UUID clientId, UUID fromAccountId, UUID toAccountId, Money amount) {
+    Transfer transfer =
+        new Transfer(
+            id, clientId, fromAccountId, toAccountId, amount, TransferStatus.ACCEPTED, null);
+
+    transfer.events.add(new TransferAcceptedEvent(UUID.randomUUID(), id));
+
+    return transfer;
+  }
+
+  /** Rebuilds a transfer that was already persisted. Records no events. */
   public static Transfer restore(
       UUID id,
+      UUID clientId,
       UUID fromAccountId,
       UUID toAccountId,
-      BigDecimal amount,
-      Currency currency,
+      Money amount,
       TransferStatus status,
       RejectionReason rejectionReason) {
-    return new Transfer(id, fromAccountId, toAccountId, amount, currency, status, rejectionReason);
+    return new Transfer(id, clientId, fromAccountId, toAccountId, amount, status, rejectionReason);
+  }
+
+  /** Returns the events recorded since the last call, and forgets them. */
+  public List<TransferEvent> pullEvents() {
+    List<TransferEvent> pulled = List.copyOf(events);
+    events.clear();
+    return pulled;
   }
 
   public boolean isFinal() {
@@ -100,8 +119,8 @@ public class Transfer {
     complete();
 
     return List.of(
-        LedgerEntry.debit(id, source.getId(), amount, currency),
-        LedgerEntry.credit(id, destination.getId(), amount, currency));
+        LedgerEntry.debit(id, source.getId(), amount),
+        LedgerEntry.credit(id, destination.getId(), amount));
   }
 
   /** Rejects the transfer because one of its accounts does not exist. */
@@ -119,7 +138,8 @@ public class Transfer {
       return RejectionReason.DESTINATION_ACCOUNT_NOT_ACTIVE;
     }
 
-    if (!currency.equals(source.getCurrency()) || !currency.equals(destination.getCurrency())) {
+    if (!amount.hasCurrency(source.getCurrency())
+        || !amount.hasCurrency(destination.getCurrency())) {
       return RejectionReason.CURRENCY_MISMATCH;
     }
 
@@ -130,7 +150,7 @@ public class Transfer {
     return null;
   }
 
-  public void startProcessing() {
+  private void startProcessing() {
     if (status != TransferStatus.ACCEPTED) {
       throw new IllegalStateException("Only accepted transfers can start processing");
     }
@@ -138,26 +158,22 @@ public class Transfer {
     status = TransferStatus.PROCESSING;
   }
 
-  public void complete() {
-    if (status != TransferStatus.PROCESSING) {
-      throw new IllegalStateException("Only processing transfers can be completed");
-    }
-
+  private void complete() {
     status = TransferStatus.COMPLETED;
     rejectionReason = null;
   }
 
-  public void reject(RejectionReason reason) {
-    if (status != TransferStatus.PROCESSING) {
-      throw new IllegalStateException("Only processing transfers can be rejected");
-    }
-
+  private void reject(RejectionReason reason) {
     status = TransferStatus.REJECTED;
-    this.rejectionReason = Objects.requireNonNull(reason, "Rejection reason is required");
+    rejectionReason = Objects.requireNonNull(reason, "Rejection reason is required");
   }
 
   public UUID getId() {
     return id;
+  }
+
+  public UUID getClientId() {
+    return clientId;
   }
 
   public UUID getFromAccountId() {
@@ -168,12 +184,8 @@ public class Transfer {
     return toAccountId;
   }
 
-  public BigDecimal getAmount() {
+  public Money getAmount() {
     return amount;
-  }
-
-  public Currency getCurrency() {
-    return currency;
   }
 
   public TransferStatus getStatus() {

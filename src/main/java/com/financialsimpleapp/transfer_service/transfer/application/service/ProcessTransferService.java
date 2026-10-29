@@ -1,7 +1,9 @@
 package com.financialsimpleapp.transfer_service.transfer.application.service;
 
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.ProcessTransferUseCase;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferProcessingRepository;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.AccountRepository;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.LedgerRepository;
+import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferRepository;
 import com.financialsimpleapp.transfer_service.transfer.domain.Account;
 import com.financialsimpleapp.transfer_service.transfer.domain.LedgerEntry;
 import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
@@ -17,18 +19,25 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ProcessTransferService implements ProcessTransferUseCase {
 
-  private final TransferProcessingRepository repository;
+  private final TransferRepository transferRepository;
+  private final AccountRepository accountRepository;
+  private final LedgerRepository ledgerRepository;
 
-  public ProcessTransferService(TransferProcessingRepository repository) {
-    this.repository = repository;
+  public ProcessTransferService(
+      TransferRepository transferRepository,
+      AccountRepository accountRepository,
+      LedgerRepository ledgerRepository) {
+    this.transferRepository = transferRepository;
+    this.accountRepository = accountRepository;
+    this.ledgerRepository = ledgerRepository;
   }
 
   @Override
   @Transactional
   public void process(UUID transferId) {
     Transfer transfer =
-        repository
-            .lockTransfer(transferId)
+        transferRepository
+            .lockById(transferId)
             .orElseThrow(() -> new IllegalStateException("Transfer does not exist: " + transferId));
 
     // Kafka may deliver the same event more than once.
@@ -37,7 +46,7 @@ public class ProcessTransferService implements ProcessTransferUseCase {
     }
 
     Map<UUID, Account> accounts =
-        repository.lockAccounts(transfer.getFromAccountId(), transfer.getToAccountId()).stream()
+        accountRepository.lockByIds(transfer.getFromAccountId(), transfer.getToAccountId()).stream()
             .collect(Collectors.toMap(Account::getId, Function.identity()));
 
     Account source = accounts.get(transfer.getFromAccountId());
@@ -45,18 +54,18 @@ public class ProcessTransferService implements ProcessTransferUseCase {
 
     if (source == null || destination == null) {
       transfer.rejectForMissingAccount();
-      repository.saveOutcome(transfer);
+      transferRepository.saveOutcome(transfer);
       return;
     }
 
     List<LedgerEntry> entries = transfer.execute(source, destination);
 
     if (transfer.getStatus() == TransferStatus.COMPLETED) {
-      repository.saveBalance(source);
-      repository.saveBalance(destination);
-      entries.forEach(repository::insertLedgerEntry);
+      accountRepository.saveBalance(source);
+      accountRepository.saveBalance(destination);
+      entries.forEach(ledgerRepository::append);
     }
 
-    repository.saveOutcome(transfer);
+    transferRepository.saveOutcome(transfer);
   }
 }

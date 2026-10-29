@@ -63,7 +63,7 @@ Dependency rules, all checked by `src/test/.../ArchitectureTest.java`:
 1. **Accept.** `POST /api/v1/transfers` is called with the `X-Client-Id` and `Idempotency-Key` headers. `AcceptTransferService.acceptTransfer` then runs **one transaction** that:
    - inserts the transfer (status `ACCEPTED`);
    - reserves the idempotency key with `INSERT … ON CONFLICT DO NOTHING`;
-   - inserts a `TransferAcceptedEvent` row into `outbox_events`.
+   - stores the events the aggregate recorded (`Transfer.accept` records a `TransferAcceptedEvent`; the service drains them with `transfer.pullEvents()`) into `outbox_events`.
 
    The response is `202 Accepted` with a `Location` header. If the key is already taken, the outcome depends on the SHA-256 request hash:
    - **Same hash:** the candidate transfer is deleted and the original is returned with `replayed=true`.
@@ -76,10 +76,10 @@ Dependency rules, all checked by `src/test/.../ArchitectureTest.java`:
 
    The relay is **deliberately not `@Transactional`**: Kafka must never be called while a DB transaction is open. Claim, mark and retry each run in their own short transaction via the package-private `OutboxTransactions`. A lost or expired lease means the event is re-sent, so delivery is **at-least-once**.
 3. **Process.** `TransferAcceptedListener` deserializes the event and calls `ProcessTransferUseCase`. `ProcessTransferService` then:
-   - locks the transfer row and both account rows (`FOR UPDATE`, accounts ordered by id to avoid deadlocks);
+   - locks the transfer row (`TransferRepository.lockById`) and both account rows (`AccountRepository.lockByIds`, ordered by id to avoid deadlocks), all `FOR UPDATE`;
    - returns early if the transfer is already final, which makes duplicate deliveries harmless;
    - calls `Transfer.execute(source, destination)`;
-   - saves the balances, the ledger entries and the outcome.
+   - saves the balances (`AccountRepository`), appends the ledger entries (`LedgerRepository`) and saves the outcome (`TransferRepository`).
 
    The outcome `UPDATE`s are guarded with `WHERE status = 'ACCEPTED'`. If processing still fails, it is retried 3 times and then sent to `<topic>.DLT`.
 
@@ -95,12 +95,23 @@ It either rejects with a `RejectionReason` or debits and credits the `Account`s 
 
 Keep new rules in the domain, not in services or SQL. The one exception is a missing account: that is a lookup result, so the service checks it and calls `transfer.rejectForMissingAccount()`.
 
+### Domain model: compact (tactical) DDD
+
+The domain uses DDD's building blocks only where they pay off. Keep it that way:
+- **Aggregates:** `Transfer` (root, owns `clientId`) and `Account`. `Transfer`'s state transitions are private, so it can only be driven through `accept`, `execute` and `rejectForMissingAccount`. A transfer changes three aggregates (itself and two accounts) in one transaction, on purpose: moving money must be atomic, and the row locks make it safe.
+- **Value objects:**
+  - `Money` (amount + currency, scale 2): it is the only place for money rules. Arithmetic and comparisons refuse mixed currencies. Never pass a bare `BigDecimal` amount through the domain.
+  - `LedgerEntry`, plus the enums.
+- **Domain events:** aggregates record them (`TransferEvent`, a sealed interface), and the application service stores them in the outbox. To add one, implement `TransferEvent`, record it in the aggregate and decide who consumes it.
+- **Repositories:** one output port per aggregate (`TransferRepository`, `AccountRepository`, `LedgerRepository` for the append-only ledger) plus `OutboxRepository`. Don't reintroduce use-case-shaped repositories. `TransferRepository.findStatusById` is the one read-model query.
+- **Deliberately not used:** typed IDs, domain-service layers, factories, specifications, event sourcing, sagas between accounts.
+
 - `PROCESSING` is a domain-only intermediate state. It is never written to the database, because the final state is committed in the same transaction.
 - Rejection codes and ledger entry types are stored as the enum `name()`.
 
 ### Event contract
 
-`domain/TransferAcceptedEvent` is the single definition of the Kafka payload (`{"eventId","transferId"}`, type `TRANSFER_ACCEPTED`):
+`domain/TransferAcceptedEvent` is the single definition of the Kafka payload (`{"eventId","transferId"}`, type `TRANSFER_ACCEPTED`; only the record components are serialized, not `type()`). The happy-path end-to-end test asserts the exact field set:
 - `JdbcOutboxRepository` serializes it into `outbox_events.payload`;
 - the listener deserializes the same record.
 
@@ -118,7 +129,7 @@ The schema is defined only by the Flyway migrations in `src/main/resources/db/mi
 
 | Test | Kind | What it covers |
 |---|---|---|
-| `domain/TransferTest` | plain unit | domain rules and state machine |
+| `domain/TransferTest`, `domain/MoneyTest` | plain unit | domain rules, state machine, recorded events, money arithmetic and currency safety |
 | `application/service/RelayOutboxEventsServiceTest` | Mockito unit | relay: claim, publish, mark, retry/backoff, lease |
 | `application/service/AcceptTransferServiceIntegrationTest` | `@SpringBootTest` + Testcontainers | acceptance, idempotency, concurrency, rollback when the outbox insert fails |
 | `application/service/OutboxRelayIntegrationTest` | `@SpringBootTest`, mocked publisher | outbox SQL against real Postgres: lease expiry, stale lock tokens, concurrent relays, backoff stored in `next_attempt_at`, send order |

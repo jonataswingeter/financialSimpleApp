@@ -2,8 +2,6 @@ package com.financialsimpleapp.transfer_service.transfer.domain;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import java.math.BigDecimal;
-import java.util.Currency;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Nested;
@@ -11,57 +9,70 @@ import org.junit.jupiter.api.Test;
 
 class TransferTest {
 
-  private Transfer newTransfer(BigDecimal amount) {
-    return new Transfer(
+  private static final UUID CLIENT_ID = UUID.randomUUID();
+
+  private Transfer newTransfer(String amount) {
+    return Transfer.accept(
+        UUID.randomUUID(),
+        CLIENT_ID,
         UUID.randomUUID(),
         UUID.randomUUID(),
-        UUID.randomUUID(),
-        amount,
-        Currency.getInstance("CHF"));
+        Money.of(amount, "CHF"));
   }
 
-  @Test
-  void shouldStartInAcceptedStatus() {
-    Transfer transfer = newTransfer(new BigDecimal("100.00"));
+  @Nested
+  class Accept {
 
-    assertEquals(TransferStatus.ACCEPTED, transfer.getStatus());
-  }
+    @Test
+    void shouldStartInAcceptedStatus() {
+      Transfer transfer = newTransfer("100.00");
 
-  @Test
-  void shouldCompleteTransferAfterProcessing() {
-    Transfer transfer = newTransfer(new BigDecimal("100.00"));
+      assertEquals(TransferStatus.ACCEPTED, transfer.getStatus());
+      assertEquals(CLIENT_ID, transfer.getClientId());
+    }
 
-    transfer.startProcessing();
-    transfer.complete();
+    @Test
+    void shouldRecordTransferAcceptedEvent() {
+      Transfer transfer = newTransfer("100.00");
 
-    assertEquals(TransferStatus.COMPLETED, transfer.getStatus());
-  }
+      List<TransferEvent> events = transfer.pullEvents();
 
-  @Test
-  void shouldRejectNegativeAmount() {
-    assertThrows(IllegalArgumentException.class, () -> newTransfer(new BigDecimal("-10.00")));
-  }
+      assertEquals(1, events.size());
+      TransferAcceptedEvent event =
+          assertInstanceOf(TransferAcceptedEvent.class, events.getFirst());
+      assertEquals(transfer.getId(), event.transferId());
+      assertEquals(TransferAcceptedEvent.TYPE, event.type());
+    }
 
-  @Test
-  void shouldRejectTransferBetweenSameAccount() {
-    UUID accountId = UUID.randomUUID();
+    @Test
+    void shouldHandOutEventsOnlyOnce() {
+      Transfer transfer = newTransfer("100.00");
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            new Transfer(
-                UUID.randomUUID(),
-                accountId,
-                accountId,
-                new BigDecimal("10.00"),
-                Currency.getInstance("CHF")));
-  }
+      transfer.pullEvents();
 
-  @Test
-  void shouldNotCompleteTransferBeforeProcessing() {
-    Transfer transfer = newTransfer(new BigDecimal("100.00"));
+      assertTrue(transfer.pullEvents().isEmpty());
+    }
 
-    assertThrows(IllegalStateException.class, transfer::complete);
+    @Test
+    void shouldRejectNegativeAmount() {
+      assertThrows(IllegalArgumentException.class, () -> newTransfer("-10.00"));
+    }
+
+    @Test
+    void shouldRejectZeroAmount() {
+      assertThrows(IllegalArgumentException.class, () -> newTransfer("0.00"));
+    }
+
+    @Test
+    void shouldRejectTransferBetweenSameAccount() {
+      UUID accountId = UUID.randomUUID();
+
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              Transfer.accept(
+                  UUID.randomUUID(), CLIENT_ID, accountId, accountId, Money.of("10.00", "CHF")));
+    }
   }
 
   @Nested
@@ -71,16 +82,12 @@ class TransferTest {
     private final UUID destinationId = UUID.randomUUID();
 
     private Transfer transfer(String amount, String currency) {
-      return new Transfer(
-          UUID.randomUUID(),
-          sourceId,
-          destinationId,
-          new BigDecimal(amount),
-          Currency.getInstance(currency));
+      return Transfer.accept(
+          UUID.randomUUID(), CLIENT_ID, sourceId, destinationId, Money.of(amount, currency));
     }
 
     private Account account(UUID id, String balance, String currency, AccountStatus status) {
-      return new Account(id, Currency.getInstance(currency), new BigDecimal(balance), status);
+      return new Account(id, Money.of(balance, currency), status);
     }
 
     @Test
@@ -94,18 +101,13 @@ class TransferTest {
       assertEquals(TransferStatus.COMPLETED, transfer.getStatus());
       assertNull(transfer.getRejectionReason());
       assertTrue(transfer.isFinal());
-      assertEquals(new BigDecimal("75.00"), source.getBalance());
-      assertEquals(new BigDecimal("35.00"), destination.getBalance());
+      assertEquals(Money.of("75.00", "EUR"), source.getBalance());
+      assertEquals(Money.of("35.00", "EUR"), destination.getBalance());
 
       assertEquals(
           List.of(
-              LedgerEntry.debit(
-                  transfer.getId(), sourceId, new BigDecimal("25.00"), Currency.getInstance("EUR")),
-              LedgerEntry.credit(
-                  transfer.getId(),
-                  destinationId,
-                  new BigDecimal("25.00"),
-                  Currency.getInstance("EUR"))),
+              LedgerEntry.debit(transfer.getId(), sourceId, Money.of("25.00", "EUR")),
+              LedgerEntry.credit(transfer.getId(), destinationId, Money.of("25.00", "EUR"))),
           entries);
     }
 
@@ -118,7 +120,7 @@ class TransferTest {
       transfer.execute(source, destination);
 
       assertEquals(TransferStatus.COMPLETED, transfer.getStatus());
-      assertEquals(0, BigDecimal.ZERO.compareTo(source.getBalance()));
+      assertEquals(Money.of("0.00", "EUR"), source.getBalance());
     }
 
     @Test
@@ -176,7 +178,18 @@ class TransferTest {
       transfer.execute(source, destination);
 
       assertThrows(IllegalStateException.class, () -> transfer.execute(source, destination));
-      assertEquals(new BigDecimal("75.00"), source.getBalance());
+      assertEquals(Money.of("75.00", "EUR"), source.getBalance());
+    }
+
+    @Test
+    void shouldNotRejectAFinishedTransfer() {
+      Transfer transfer = transfer("25.00", "EUR");
+      transfer.execute(
+          account(sourceId, "100.00", "EUR", AccountStatus.ACTIVE),
+          account(destinationId, "10.00", "EUR", AccountStatus.ACTIVE));
+
+      assertThrows(IllegalStateException.class, transfer::rejectForMissingAccount);
+      assertEquals(TransferStatus.COMPLETED, transfer.getStatus());
     }
 
     @Test
@@ -191,8 +204,8 @@ class TransferTest {
 
     private void assertRejected(
         Transfer transfer, Account source, Account destination, RejectionReason expectedReason) {
-      BigDecimal sourceBalance = source.getBalance();
-      BigDecimal destinationBalance = destination.getBalance();
+      Money sourceBalance = source.getBalance();
+      Money destinationBalance = destination.getBalance();
 
       List<LedgerEntry> entries = transfer.execute(source, destination);
 
@@ -204,34 +217,36 @@ class TransferTest {
     }
   }
 
-  @Test
-  void shouldRestorePersistedTransfer() {
-    Transfer transfer =
-        Transfer.restore(
-            UUID.randomUUID(),
-            UUID.randomUUID(),
-            UUID.randomUUID(),
-            new BigDecimal("10.00"),
-            Currency.getInstance("EUR"),
-            TransferStatus.REJECTED,
-            RejectionReason.INSUFFICIENT_FUNDS);
+  @Nested
+  class Restore {
 
-    assertTrue(transfer.isFinal());
-    assertEquals(RejectionReason.INSUFFICIENT_FUNDS, transfer.getRejectionReason());
-  }
+    private Transfer restore(TransferStatus status, RejectionReason reason) {
+      return Transfer.restore(
+          UUID.randomUUID(),
+          CLIENT_ID,
+          UUID.randomUUID(),
+          UUID.randomUUID(),
+          Money.of("10.00", "EUR"),
+          status,
+          reason);
+    }
 
-  @Test
-  void shouldNotRestoreRejectedTransferWithoutReason() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            Transfer.restore(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                new BigDecimal("10.00"),
-                Currency.getInstance("EUR"),
-                TransferStatus.REJECTED,
-                null));
+    @Test
+    void shouldRestorePersistedTransfer() {
+      Transfer transfer = restore(TransferStatus.REJECTED, RejectionReason.INSUFFICIENT_FUNDS);
+
+      assertTrue(transfer.isFinal());
+      assertEquals(RejectionReason.INSUFFICIENT_FUNDS, transfer.getRejectionReason());
+    }
+
+    @Test
+    void shouldNotRecordEventsWhenRestoring() {
+      assertTrue(restore(TransferStatus.ACCEPTED, null).pullEvents().isEmpty());
+    }
+
+    @Test
+    void shouldNotRestoreRejectedTransferWithoutReason() {
+      assertThrows(IllegalArgumentException.class, () -> restore(TransferStatus.REJECTED, null));
+    }
   }
 }
