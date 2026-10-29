@@ -41,6 +41,8 @@ import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -198,6 +200,8 @@ class TransferEndToEndIntegrationTest {
    * already confirmed it, and Kafka itself may redeliver. Money must still move exactly once.
    */
   @Test
+  @Tag("scenario-01")
+  @DisplayName("#01 Duplicate delivery: the same event delivered 3 times moves money once")
   void shouldMoveMoneyOnlyOnceWhenTheSameEventIsDeliveredRepeatedly() throws Exception {
     // A duplicate must be a silent no-op. Throwing instead would also keep the money safe, but
     // every duplicate would then be retried and end up in the dead-letter topic.
@@ -245,6 +249,9 @@ class TransferEndToEndIntegrationTest {
    * scheduled, and the event is published (and processed) once the broker is back.
    */
   @Test
+  @Tag("scenario-02")
+  @DisplayName(
+      "#02 Broker outage: failed sends are retried and the event is published once Kafka is back")
   void shouldRetryAndEventuallyPublishWhenBrokerIsTemporarilyUnavailable() {
     EventPublishingException brokerDown =
         new EventPublishingException("Simulated broker outage", null);
@@ -284,6 +291,8 @@ class TransferEndToEndIntegrationTest {
    * consumed, and the transfer ends REJECTED with its reason and no money moved.
    */
   @Test
+  @Tag("scenario-06")
+  @DisplayName("#06 Business rejection: insufficient funds ends REJECTED with no money moved")
   void shouldRejectTransferWithoutMovingMoneyWhenFundsAreInsufficient() {
     UUID transferId = acceptViaApi("insufficient-funds-001", "1000.01");
 
@@ -297,6 +306,9 @@ class TransferEndToEndIntegrationTest {
 
   /** Account rules are checked when the transfer is processed, not when it is accepted. */
   @Test
+  @Tag("scenario-06")
+  @DisplayName(
+      "#06 Business rejection: account blocked after acceptance ends SOURCE_ACCOUNT_NOT_ACTIVE")
   void shouldRejectTransferWhenSourceAccountWasBlockedAfterAcceptance() {
     // Hold the event in the outbox (the broker is "down") until the account is blocked.
     AtomicBoolean accountBlocked = new AtomicBoolean();
@@ -327,6 +339,8 @@ class TransferEndToEndIntegrationTest {
    * would debit twice and hit the unique (transfer_id, entry_type) ledger constraint forever.
    */
   @Test
+  @Tag("scenario-07")
+  @DisplayName("#07 Processing failure: partial work rolls back and the Kafka retry completes it")
   void shouldRollBackPartialProcessingAndCompleteOnKafkaRetry() {
     doCallRealMethod()
         .doThrow(new IllegalStateException("Simulated database failure"))
@@ -352,6 +366,9 @@ class TransferEndToEndIntegrationTest {
    * transfers on the same partitions are still processed.
    */
   @Test
+  @Tag("scenario-09")
+  @DisplayName(
+      "#09 Poison message: malformed JSON goes to the DLT and later transfers are still processed")
   void shouldParkUnreadableMessageInDeadLetterTopicAndKeepConsuming() throws Exception {
     String key = "poison-" + UUID.randomUUID();
     int partitions = kafkaTemplate.partitionsFor(topic).size();
@@ -383,6 +400,9 @@ class TransferEndToEndIntegrationTest {
    * the dead-letter topic instead of being retried forever.
    */
   @Test
+  @Tag("scenario-09")
+  @DisplayName(
+      "#09 Poison message: an event for an unknown transfer goes to the DLT after 3 retries")
   void shouldParkEventForUnknownTransferInDeadLetterTopic() throws Exception {
     UUID unknownTransferId = UUID.randomUUID();
     String payload =
@@ -410,6 +430,9 @@ class TransferEndToEndIntegrationTest {
    * at-least-once re-send, lands on the same partition and is consumed in order by one consumer.
    */
   @Test
+  @Tag("scenario-10")
+  @DisplayName(
+      "#10 Ordering: messages are keyed by transfer ID, so a re-sent copy shares the partition")
   void shouldKeyEveryMessageByTransferIdSoItsCopiesShareAPartition() throws Exception {
     UUID transferId = acceptViaApi("ordering-key-001", "25.00");
     awaitStatus(transferId, TransferStatus.COMPLETED);

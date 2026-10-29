@@ -125,6 +125,8 @@ The schema is defined only by the Flyway migrations in `src/main/resources/db/mi
 | `transfer/TransferEndToEndIntegrationTest` | full end-to-end | HTTP → outbox → Kafka → listener: completion, rejection, duplicate delivery, broker outage, rollback + Kafka retry, DLT, message key; uses `RestTestClient` + Awaitility |
 | `ArchitectureTest` | ArchUnit | layer boundaries |
 
+**Outbox scenarios #01–#10:** the ranked test scenarios are listed in [`docs/outbox-test-scenarios.md`](docs/outbox-test-scenarios.md). Each one carries `@DisplayName("#NN …")` and `@Tag("scenario-NN")`. Run a single scenario with `mvn test -Dgroups=scenario-07`. When you add a scenario test, tag it and add it to that file.
+
 Things that are easy to get wrong:
 - **Docker:** every `@SpringBootTest` imports `TestcontainersConfiguration` (Postgres 16 + single-node `apache/kafka-native`) and needs Docker running.
 - **Outbox scheduling is off by default in tests** (`app.outbox.scheduling.enabled: false` in `src/test/resources/application.yaml`). Tests that need the relay turn it back on, as the end-to-end test does.

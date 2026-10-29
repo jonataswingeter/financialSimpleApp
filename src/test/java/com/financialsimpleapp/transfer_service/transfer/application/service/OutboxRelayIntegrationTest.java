@@ -34,6 +34,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -97,6 +99,8 @@ class OutboxRelayIntegrationTest {
   // ---------------------------------------------------------------------------------------------
 
   @Test
+  @Tag("scenario-04")
+  @DisplayName("#04 Lease expiry: a leased event cannot be claimed again")
   void shouldNotHandOutAnEventWhileItsLeaseIsActive() {
     TransferAcceptedEvent event = insertEvent();
 
@@ -117,6 +121,8 @@ class OutboxRelayIntegrationTest {
    * the consumer's idempotency (see the end-to-end duplicate-delivery test) absorbs the copy.
    */
   @Test
+  @Tag("scenario-04")
+  @DisplayName("#04 Lease expiry: an event whose owner crashed is re-sent after its lease expires")
   void shouldRepublishEventWhenOwnerCrashedAfterSendingButBeforeMarking() {
     TransferAcceptedEvent event = insertEvent();
 
@@ -132,6 +138,8 @@ class OutboxRelayIntegrationTest {
   }
 
   @Test
+  @Tag("scenario-04")
+  @DisplayName("#04 Lease expiry: an instance that lost its lease cannot overwrite the outcome")
   void shouldIgnoreOutcomeReportedByInstanceThatLostItsLease() {
     TransferAcceptedEvent event = insertEvent();
 
@@ -162,6 +170,8 @@ class OutboxRelayIntegrationTest {
   // ---------------------------------------------------------------------------------------------
 
   @Test
+  @Tag("scenario-05")
+  @DisplayName("#05 Concurrent relays: each event is claimed by exactly one instance")
   void shouldGiveEachEventToExactlyOneOfConcurrentClaimers() throws Exception {
     Set<UUID> inserted = new HashSet<>();
     for (int i = 0; i < 100; i++) {
@@ -189,6 +199,8 @@ class OutboxRelayIntegrationTest {
   }
 
   @Test
+  @Tag("scenario-05")
+  @DisplayName("#05 Concurrent relays: each event is published exactly once")
   void shouldPublishEachEventExactlyOnceWithConcurrentRelays() throws Exception {
     Set<UUID> transferIds = new HashSet<>();
     for (int i = 0; i < 60; i++) {
@@ -233,6 +245,8 @@ class OutboxRelayIntegrationTest {
    * 1s, doubling per attempt, capped at retry-max 5m.
    */
   @Test
+  @Tag("scenario-08")
+  @DisplayName("#08 DB backoff: next_attempt_at doubles per failure and blocks claiming until due")
   void shouldBackOffExponentiallyBetweenFailedSendsAndPublishOnceTheBrokerRecovers() {
     doThrow(new EventPublishingException("Simulated broker outage", null))
         .when(eventPublisher)
@@ -262,6 +276,8 @@ class OutboxRelayIntegrationTest {
   }
 
   @Test
+  @Tag("scenario-08")
+  @DisplayName("#08 DB backoff: the delay is capped at retry-max")
   void shouldCapTheBackoffAtTheConfiguredMaximum() {
     doThrow(new EventPublishingException("Simulated broker outage", null))
         .when(eventPublisher)
@@ -281,6 +297,8 @@ class OutboxRelayIntegrationTest {
 
   /** A single relay sends events oldest first, across batch boundaries. */
   @Test
+  @Tag("scenario-10")
+  @DisplayName("#10 Ordering: events are published oldest first across batches")
   void shouldPublishEventsInCreationOrderAcrossBatches() {
     int batch = settings.batchSize();
     List<UUID> created = insertEventsInCreationOrder(2 * batch + 5);
@@ -301,6 +319,8 @@ class OutboxRelayIntegrationTest {
    * end-to-end test).
    */
   @Test
+  @Tag("scenario-10")
+  @DisplayName("#10 Ordering: a failing event does not hold back the events behind it")
   void shouldNotLetAFailingEventHoldBackTheEventsBehindIt() {
     List<UUID> created = insertEventsInCreationOrder(3);
     UUID failing = created.getFirst();

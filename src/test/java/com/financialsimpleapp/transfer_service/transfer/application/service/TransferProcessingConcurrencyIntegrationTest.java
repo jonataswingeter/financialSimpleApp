@@ -19,6 +19,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -64,6 +66,8 @@ class TransferProcessingConcurrencyIntegrationTest {
   }
 
   @Test
+  @Tag("scenario-03")
+  @DisplayName("#03 Concurrent transfers: draining one account in parallel never overdraws it")
   void shouldNeverOverdrawWhenConcurrentTransfersDrainTheSameAccount() throws Exception {
     // 10 x 200.00 out of an account holding 1000.00: exactly half can succeed.
     List<UUID> transfers = new ArrayList<>();
@@ -81,6 +85,8 @@ class TransferProcessingConcurrencyIntegrationTest {
   }
 
   @Test
+  @Tag("scenario-03")
+  @DisplayName("#03 Concurrent transfers: A->B and B->A in parallel never deadlock")
   void shouldNotDeadlockWhenTransfersCrossInOppositeDirections() throws Exception {
     // Interleaved A->B and B->A transfers lock the same two rows from both sides. Without a
     // consistent lock order, PostgreSQL would abort some of them with "deadlock detected".
