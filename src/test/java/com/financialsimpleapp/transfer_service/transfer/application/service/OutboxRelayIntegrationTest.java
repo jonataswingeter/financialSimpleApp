@@ -66,9 +66,13 @@ class OutboxRelayIntegrationTest {
 
   @Autowired private JdbcTemplate jdbcTemplate;
 
+  @Autowired private OutboxRelaySettings settings;
+
   @MockitoBean private TransferEventPublisher eventPublisher;
 
   private final Map<UUID, AtomicInteger> sendsPerTransfer = new ConcurrentHashMap<>();
+
+  private final Queue<UUID> sendOrder = new ConcurrentLinkedQueue<>();
 
   @BeforeEach
   void setUp() {
@@ -81,6 +85,7 @@ class OutboxRelayIntegrationTest {
               sendsPerTransfer
                   .computeIfAbsent(transferId, id -> new AtomicInteger())
                   .incrementAndGet();
+              sendOrder.add(transferId);
               return null;
             })
         .when(eventPublisher)
@@ -235,17 +240,17 @@ class OutboxRelayIntegrationTest {
 
     TransferAcceptedEvent event = insertEvent();
 
-    assertRetryScheduledAfterFailedRelay(event.eventId(), 1, Duration.ofSeconds(1));
+    assertRetryScheduledAfterFailedRelay(event.eventId(), 1, settings.retryBase());
 
     // Backing off: no relay instance may pick the event up before its next attempt time.
     assertTrue(outboxRepository.claimPending(10, LEASE).isEmpty());
     assertEquals(0, relayOutboxEvents.relayPendingEvents());
 
     makeDue(event.eventId());
-    assertRetryScheduledAfterFailedRelay(event.eventId(), 2, Duration.ofSeconds(2));
+    assertRetryScheduledAfterFailedRelay(event.eventId(), 2, settings.retryBase().multipliedBy(2));
 
     makeDue(event.eventId());
-    assertRetryScheduledAfterFailedRelay(event.eventId(), 3, Duration.ofSeconds(4));
+    assertRetryScheduledAfterFailedRelay(event.eventId(), 3, settings.retryBase().multipliedBy(4));
 
     // The broker is back.
     doNothing().when(eventPublisher).publish(any(UUID.class), anyString());
@@ -267,10 +272,97 @@ class OutboxRelayIntegrationTest {
     jdbcTemplate.update(
         "UPDATE outbox_events SET attempts = 30 WHERE event_id = ?", event.eventId());
 
-    assertRetryScheduledAfterFailedRelay(event.eventId(), 31, Duration.ofMinutes(5));
+    assertRetryScheduledAfterFailedRelay(event.eventId(), 31, settings.retryMax());
   }
 
   // ---------------------------------------------------------------------------------------------
+  // #10 Ordering
+  // ---------------------------------------------------------------------------------------------
+
+  /** A single relay sends events oldest first, across batch boundaries. */
+  @Test
+  void shouldPublishEventsInCreationOrderAcrossBatches() {
+    int batch = settings.batchSize();
+    List<UUID> created = insertEventsInCreationOrder(2 * batch + 5);
+
+    // Two full batches and a partial one, then nothing left.
+    assertEquals(batch, relayOutboxEvents.relayPendingEvents());
+    assertEquals(batch, relayOutboxEvents.relayPendingEvents());
+    assertEquals(5, relayOutboxEvents.relayPendingEvents());
+    assertEquals(0, relayOutboxEvents.relayPendingEvents());
+
+    assertEquals(created, List.copyOf(sendOrder));
+  }
+
+  /**
+   * Ordering is best effort, not a barrier: an event that keeps failing is retried later and must
+   * not hold back the events behind it. This is safe because each transfer has a single event and
+   * transfers are processed independently; per-transfer order is kept by the Kafka key (see the
+   * end-to-end test).
+   */
+  @Test
+  void shouldNotLetAFailingEventHoldBackTheEventsBehindIt() {
+    List<UUID> created = insertEventsInCreationOrder(3);
+    UUID failing = created.getFirst();
+
+    doAnswer(
+            invocation -> {
+              UUID transferId = invocation.getArgument(0);
+              if (transferId.equals(failing)) {
+                throw new EventPublishingException("Simulated rejection by the broker", null);
+              }
+              sendOrder.add(transferId);
+              return null;
+            })
+        .when(eventPublisher)
+        .publish(any(UUID.class), anyString());
+
+    assertEquals(2, relayOutboxEvents.relayPendingEvents());
+    assertEquals(created.subList(1, 3), List.copyOf(sendOrder));
+
+    // The broker accepts it again; once its backoff has passed, the oldest event goes last.
+    doAnswer(
+            invocation -> {
+              sendOrder.add(invocation.getArgument(0));
+              return null;
+            })
+        .when(eventPublisher)
+        .publish(any(UUID.class), anyString());
+    makeDue(eventIdOf(failing));
+
+    assertEquals(1, relayOutboxEvents.relayPendingEvents());
+    assertEquals(List.of(created.get(1), created.get(2), failing), List.copyOf(sendOrder));
+  }
+
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Inserts events with strictly increasing created_at (1 ms apart), so the order does not depend
+   * on clock resolution or on the random event_id tie-breaker.
+   *
+   * @return the transfer IDs, oldest first
+   */
+  private List<UUID> insertEventsInCreationOrder(int count) {
+    List<UUID> transferIds = new ArrayList<>();
+    for (int i = 0; i < count; i++) {
+      TransferAcceptedEvent event = insertEvent();
+      jdbcTemplate.update(
+          """
+          UPDATE outbox_events
+          SET created_at = timestamptz '2026-01-01 00:00:00+00' + (? * interval '1 millisecond')
+          WHERE event_id = ?
+          """,
+          i,
+          event.eventId());
+      transferIds.add(event.transferId());
+    }
+    return transferIds;
+  }
+
+  private UUID eventIdOf(UUID transferId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT event_id FROM outbox_events WHERE aggregate_id = ?", UUID.class, transferId);
+  }
 
   /**
    * Runs one relay that fails to send, and checks the stored retry: attempts incremented, lease

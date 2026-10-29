@@ -120,16 +120,21 @@ The schema is defined only by the Flyway migrations in `src/main/resources/db/mi
 | `domain/TransferTest` | plain unit | domain rules and state machine |
 | `application/service/OutboxRelayServiceTest` | Mockito unit | relay: claim, publish, mark, retry/backoff, lease |
 | `application/service/TransferServiceIntegrationTest` | `@SpringBootTest` + Testcontainers | acceptance, idempotency, concurrency, rollback when the outbox insert fails |
-| `transfer/TransferEndToEndIntegrationTest` | full end-to-end | HTTP → outbox → Kafka → listener → `COMPLETED`, balances, ledger; uses `RestTestClient` + Awaitility |
+| `application/service/OutboxRelayIntegrationTest` | `@SpringBootTest`, mocked publisher | outbox SQL against real Postgres: lease expiry, stale lock tokens, concurrent relays, backoff stored in `next_attempt_at`, send order |
+| `application/service/TransferProcessingConcurrencyIntegrationTest` | `@SpringBootTest` + Testcontainers | parallel processing on shared accounts: no overdraft, no deadlock, ledger consistent |
+| `transfer/TransferEndToEndIntegrationTest` | full end-to-end | HTTP → outbox → Kafka → listener: completion, rejection, duplicate delivery, broker outage, rollback + Kafka retry, DLT, message key; uses `RestTestClient` + Awaitility |
 | `ArchitectureTest` | ArchUnit | layer boundaries |
 
 Things that are easy to get wrong:
 - **Docker:** every `@SpringBootTest` imports `TestcontainersConfiguration` (Postgres 16 + single-node `apache/kafka-native`) and needs Docker running.
 - **Outbox scheduling is off by default in tests** (`app.outbox.scheduling.enabled: false` in `src/test/resources/application.yaml`). Tests that need the relay turn it back on, as the end-to-end test does.
+- **`src/test/resources/application.yaml` replaces the main one; it doesn't add to it.** Every setting it leaves out falls back to the `@Value` default in code. For example, `batch-size` is 100 in tests, not 20. Tests read `OutboxRelaySettings` instead of hard-coding these values.
 - **Single-broker Kafka:** the test config sets `app.kafka.replication-factor: 1` and `app.kafka.min-insync-replicas: 1`. With the production defaults (3 and 2) and `acks=all`, every send fails against one broker.
 - **Consumer offset:** end-to-end tests set `spring.kafka.consumer.auto-offset-reset=earliest`. Otherwise the listener can join after the event was published and miss it.
 - **Test data:** tests clean the tables themselves in `@BeforeEach`, deleting children first: `outbox_events`, `ledger_entries`, `idempotency_records`, `transfer_requests`, `accounts`.
 - **Container reuse:** a test class with different `properties` gets its own Spring context, and therefore its own containers.
+- **Stale classes from the IDE:** the VS Code Java extension compiles into `target/` too. After editing, a plain `mvn test` can run a mix of IDE- and Maven-compiled classes, which shows up as tests behaving as if a change were not there. Use `mvn clean test` / `mvn clean verify` when results look wrong, and always after reverting a change to `src/main`.
+- **Time in tests:** don't sleep for leases or backoff. Move `locked_until` / `next_attempt_at` into the past with SQL instead (see `OutboxRelayIntegrationTest`).
 
 ## Other gotchas
 

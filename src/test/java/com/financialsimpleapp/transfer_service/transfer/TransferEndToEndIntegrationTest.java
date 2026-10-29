@@ -405,13 +405,50 @@ class TransferEndToEndIntegrationTest {
     verify(processTransferUseCase, times(4)).process(unknownTransferId);
   }
 
-  /** Reads the dead-letter topic from the beginning until {@code expected} records with the key. */
+  /**
+   * The Kafka key is the transfer ID, so every copy of a transfer's event, including an
+   * at-least-once re-send, lands on the same partition and is consumed in order by one consumer.
+   */
+  @Test
+  void shouldKeyEveryMessageByTransferIdSoItsCopiesShareAPartition() throws Exception {
+    UUID transferId = acceptViaApi("ordering-key-001", "25.00");
+    awaitStatus(transferId, TransferStatus.COMPLETED);
+
+    // The relay re-sends the event, as it does after losing its lease.
+    String payload =
+        jdbcTemplate.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE aggregate_id = ?",
+            String.class,
+            transferId);
+    eventPublisher.publish(transferId, payload);
+
+    List<ConsumerRecord<String, String>> copies = awaitRecords(topic, transferId.toString(), 2);
+
+    assertEquals(copies.get(0).partition(), copies.get(1).partition());
+    assertTrue(copies.get(0).offset() < copies.get(1).offset());
+    for (ConsumerRecord<String, String> copy : copies) {
+      assertEquals(payload, copy.value());
+    }
+
+    // The copy was consumed after the original and changed nothing.
+    verify(processTransferUseCase, timeout(PROCESSING_TIMEOUT.toMillis()).times(2))
+        .process(transferId);
+    assertBalance(fromAccountId, "975.00");
+    assertEquals(2, countLedgerEntries(transferId));
+  }
+
   private List<ConsumerRecord<String, String>> awaitDeadLetters(String key, int expected) {
+    return awaitRecords(topic + ".DLT", key, expected);
+  }
+
+  /** Reads {@code topicName} from the beginning until {@code expected} records with the key. */
+  private List<ConsumerRecord<String, String>> awaitRecords(
+      String topicName, String key, int expected) {
     List<ConsumerRecord<String, String>> found = new ArrayList<>();
 
     try (Consumer<String, String> consumer =
-        consumerFactory.createConsumer("dlt-reader-" + UUID.randomUUID(), null)) {
-      consumer.subscribe(List.of(topic + ".DLT"));
+        consumerFactory.createConsumer("test-reader-" + UUID.randomUUID(), null)) {
+      consumer.subscribe(List.of(topicName));
 
       await()
           .atMost(PROCESSING_TIMEOUT)
@@ -429,7 +466,7 @@ class TransferEndToEndIntegrationTest {
               });
     }
 
-    assertEquals(expected, found.size(), "Unexpected dead letters for key " + key);
+    assertEquals(expected, found.size(), "Unexpected records on " + topicName + " for key " + key);
     return found;
   }
 
