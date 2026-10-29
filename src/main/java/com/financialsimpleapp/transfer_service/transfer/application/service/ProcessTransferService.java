@@ -15,11 +15,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-public class TransferProcessingService implements ProcessTransferUseCase {
+public class ProcessTransferService implements ProcessTransferUseCase {
 
   private final TransferProcessingRepository repository;
 
-  public TransferProcessingService(TransferProcessingRepository repository) {
+  public ProcessTransferService(TransferProcessingRepository repository) {
     this.repository = repository;
   }
 

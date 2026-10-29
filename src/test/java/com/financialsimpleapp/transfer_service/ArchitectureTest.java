@@ -6,10 +6,15 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.library.Architectures.onionArchitecture;
 
+import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
+import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ArchRule;
+import com.tngtech.archunit.lang.ConditionEvents;
+import com.tngtech.archunit.lang.SimpleConditionEvent;
+import java.util.List;
 
 /**
  * Enforces the hexagonal (ports and adapters) boundaries: adapters -> application ports -> domain,
@@ -100,4 +105,47 @@ class ArchitectureTest {
           .areNotInterfaces()
           .should()
           .resideInAPackage("..transfer.application.service..");
+
+  @ArchTest
+  static final ArchRule input_ports_are_implemented_one_per_service_named_after_the_port =
+      classes()
+          .that()
+          .implement(resideInAPackage("..transfer.application.port.in.."))
+          .and()
+          .areNotInterfaces()
+          .should(implementExactlyOneInputPortAndBeNamedAfterIt())
+          .because(
+              "FooUseCase is implemented by FooService, so each is easy to find from the other");
+
+  private static ArchCondition<JavaClass> implementExactlyOneInputPortAndBeNamedAfterIt() {
+    return new ArchCondition<>("implement exactly one input port and be named <Port>Service") {
+      @Override
+      public void check(JavaClass service, ConditionEvents events) {
+        List<String> ports =
+            service.getRawInterfaces().stream()
+                .filter(port -> port.getPackageName().contains(".application.port.in"))
+                .map(JavaClass::getSimpleName)
+                .toList();
+
+        if (ports.size() != 1) {
+          events.add(
+              SimpleConditionEvent.violated(
+                  service, service.getName() + " implements " + ports.size() + " input ports"));
+          return;
+        }
+
+        String expected = ports.getFirst().replaceFirst("UseCase$", "") + "Service";
+        if (!service.getSimpleName().equals(expected)) {
+          events.add(
+              SimpleConditionEvent.violated(
+                  service,
+                  service.getName()
+                      + " implements "
+                      + ports.getFirst()
+                      + " and should be named "
+                      + expected));
+        }
+      }
+    };
+  }
 }

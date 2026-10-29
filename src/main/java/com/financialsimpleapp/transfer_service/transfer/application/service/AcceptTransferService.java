@@ -2,16 +2,12 @@ package com.financialsimpleapp.transfer_service.transfer.application.service;
 
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferCommand;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.AcceptTransferUseCase;
-import com.financialsimpleapp.transfer_service.transfer.application.port.in.GetTransferStatusUseCase;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.IdempotencyConflictException;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferAcceptanceResult;
-import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferNotFoundException;
-import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferStatusResult;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.ExistingIdempotencyRecord;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.IdempotencyRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferRepository;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferStatusData;
 import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
@@ -22,13 +18,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-public class TransferService implements AcceptTransferUseCase, GetTransferStatusUseCase {
+public class AcceptTransferService implements AcceptTransferUseCase {
 
   private final TransferRepository transferRepository;
   private final IdempotencyRepository idempotencyRepository;
   private final OutboxRepository outboxRepository;
 
-  public TransferService(
+  public AcceptTransferService(
       TransferRepository transferRepository,
       IdempotencyRepository idempotencyRepository,
       OutboxRepository outboxRepository) {
@@ -96,21 +92,5 @@ public class TransferService implements AcceptTransferUseCase, GetTransferStatus
         new TransferAcceptedEvent(UUID.randomUUID(), transfer.getId()));
 
     return new TransferAcceptanceResult(transfer.getId(), TransferStatus.ACCEPTED, false);
-  }
-
-  @Override
-  public TransferStatusResult getTransferStatus(UUID transferId) {
-    Objects.requireNonNull(transferId, "Transfer ID is required");
-
-    TransferStatusData result =
-        transferRepository
-            .findStatusById(transferId)
-            .orElseThrow(() -> new TransferNotFoundException(transferId));
-    return new TransferStatusResult(
-        result.transferId(),
-        result.status(),
-        result.rejectionCode(),
-        result.createdAt(),
-        result.completedAt());
   }
 }

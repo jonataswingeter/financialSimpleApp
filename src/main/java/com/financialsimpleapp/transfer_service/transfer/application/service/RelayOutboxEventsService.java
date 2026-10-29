@@ -16,16 +16,16 @@ import org.springframework.stereotype.Service;
  * transaction is open. Claiming, marking and rescheduling each run in their own short transaction.
  */
 @Service
-public class OutboxRelayService implements RelayOutboxEventsUseCase {
+public class RelayOutboxEventsService implements RelayOutboxEventsUseCase {
 
-  private static final Logger log = LoggerFactory.getLogger(OutboxRelayService.class);
+  private static final Logger log = LoggerFactory.getLogger(RelayOutboxEventsService.class);
 
-  private final OutboxTransactionService outboxTransactions;
+  private final OutboxTransactions outboxTransactions;
   private final TransferEventPublisher eventPublisher;
   private final OutboxRelaySettings settings;
 
-  public OutboxRelayService(
-      OutboxTransactionService outboxTransactions,
+  public RelayOutboxEventsService(
+      OutboxTransactions outboxTransactions,
       TransferEventPublisher eventPublisher,
       OutboxRelaySettings settings) {
     this.outboxTransactions = outboxTransactions;

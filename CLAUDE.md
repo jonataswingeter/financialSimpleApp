@@ -17,8 +17,8 @@ mvn spotless:apply                         # format everything (fixes all format
 mvn checkstyle:check                       # lint only
 mvn test -Dtest=TransferTest               # one test class
 mvn test -Dtest='TransferTest$Execute'     # one @Nested class
-mvn test -Dtest=OutboxRelayServiceTest#shouldScheduleRetryWithBackoffWhenPublishingFails   # one method
-mvn verify -Dtest='TransferTest,OutboxRelayServiceTest,ArchitectureTest' -Dsurefire.failIfNoSpecifiedTests=false   # everything that runs without Docker
+mvn test -Dtest=RelayOutboxEventsServiceTest#shouldScheduleRetryWithBackoffWhenPublishingFails   # one method
+mvn verify -Dtest='TransferTest,RelayOutboxEventsServiceTest,ArchitectureTest' -Dsurefire.failIfNoSpecifiedTests=false   # everything that runs without Docker
 ```
 
 Run locally:
@@ -54,12 +54,13 @@ config/                          composition root (beans, settings) — exempt f
 Dependency rules, all checked by `src/test/.../ArchitectureTest.java`:
 - Adapters depend only on **ports** and the domain, never on `application.service`.
 - Implementations of `port.in` live in `application.service`; implementations of `port.out` live in `adapter.out`.
+- One service per input port, named after it: `FooUseCase` is implemented by `FooService`. For example, `AcceptTransferUseCase` is implemented by `AcceptTransferService`. Helpers in `application.service` that are not use cases, such as `OutboxTransactions` and `TransferSupport`, don't use the `Service` suffix.
 - The application layer must not import web, Kafka, JDBC, servlet or Jackson classes. `@Service` and `@Transactional` are the deliberate exceptions.
 - Adding a new adapter package means adding it to the `onionArchitecture()` rule in that test.
 
 ### The transfer flow (spans many files)
 
-1. **Accept.** `POST /api/v1/transfers` is called with the `X-Client-Id` and `Idempotency-Key` headers. `TransferService.acceptTransfer` then runs **one transaction** that:
+1. **Accept.** `POST /api/v1/transfers` is called with the `X-Client-Id` and `Idempotency-Key` headers. `AcceptTransferService.acceptTransfer` then runs **one transaction** that:
    - inserts the transfer (status `ACCEPTED`);
    - reserves the idempotency key with `INSERT … ON CONFLICT DO NOTHING`;
    - inserts a `TransferAcceptedEvent` row into `outbox_events`.
@@ -67,14 +68,14 @@ Dependency rules, all checked by `src/test/.../ArchitectureTest.java`:
    The response is `202 Accepted` with a `Location` header. If the key is already taken, the outcome depends on the SHA-256 request hash:
    - **Same hash:** the candidate transfer is deleted and the original is returned with `replayed=true`.
    - **Different hash:** `IdempotencyConflictException` is thrown, which becomes `409`.
-2. **Relay.** `OutboxRelayScheduler` (`@Scheduled`) calls `OutboxRelayService` through `RelayOutboxEventsUseCase`. The relay:
+2. **Relay.** `OutboxRelayScheduler` (`@Scheduled`) calls `RelayOutboxEventsService` through `RelayOutboxEventsUseCase`. The relay:
    - claims a batch with `FOR UPDATE SKIP LOCKED` and sets a lease (`locked_until` + `lock_token`);
    - publishes each event through `TransferEventPublisher`, waiting for the broker to confirm;
    - marks the event published only after that confirmation;
    - on a send failure, schedules a retry with exponential backoff.
 
-   The relay is **deliberately not `@Transactional`**: Kafka must never be called while a DB transaction is open. Claim, mark and retry each run in their own short transaction via `OutboxTransactionService`. A lost or expired lease means the event is re-sent, so delivery is **at-least-once**.
-3. **Process.** `TransferAcceptedListener` deserializes the event and calls `ProcessTransferUseCase`. `TransferProcessingService` then:
+   The relay is **deliberately not `@Transactional`**: Kafka must never be called while a DB transaction is open. Claim, mark and retry each run in their own short transaction via the package-private `OutboxTransactions`. A lost or expired lease means the event is re-sent, so delivery is **at-least-once**.
+3. **Process.** `TransferAcceptedListener` deserializes the event and calls `ProcessTransferUseCase`. `ProcessTransferService` then:
    - locks the transfer row and both account rows (`FOR UPDATE`, accounts ordered by id to avoid deadlocks);
    - returns early if the transfer is already final, which makes duplicate deliveries harmless;
    - calls `Transfer.execute(source, destination)`;
@@ -118,8 +119,8 @@ The schema is defined only by the Flyway migrations in `src/main/resources/db/mi
 | Test | Kind | What it covers |
 |---|---|---|
 | `domain/TransferTest` | plain unit | domain rules and state machine |
-| `application/service/OutboxRelayServiceTest` | Mockito unit | relay: claim, publish, mark, retry/backoff, lease |
-| `application/service/TransferServiceIntegrationTest` | `@SpringBootTest` + Testcontainers | acceptance, idempotency, concurrency, rollback when the outbox insert fails |
+| `application/service/RelayOutboxEventsServiceTest` | Mockito unit | relay: claim, publish, mark, retry/backoff, lease |
+| `application/service/AcceptTransferServiceIntegrationTest` | `@SpringBootTest` + Testcontainers | acceptance, idempotency, concurrency, rollback when the outbox insert fails |
 | `application/service/OutboxRelayIntegrationTest` | `@SpringBootTest`, mocked publisher | outbox SQL against real Postgres: lease expiry, stale lock tokens, concurrent relays, backoff stored in `next_attempt_at`, send order |
 | `application/service/TransferProcessingConcurrencyIntegrationTest` | `@SpringBootTest` + Testcontainers | parallel processing on shared accounts: no overdraft, no deadlock, ledger consistent |
 | `transfer/TransferEndToEndIntegrationTest` | full end-to-end | HTTP → outbox → Kafka → listener: completion, rejection, duplicate delivery, broker outage, rollback + Kafka retry, DLT, message key; uses `RestTestClient` + Awaitility |

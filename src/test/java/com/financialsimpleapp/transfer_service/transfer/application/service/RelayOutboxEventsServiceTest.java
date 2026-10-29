@@ -14,7 +14,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-class OutboxRelayServiceTest {
+class RelayOutboxEventsServiceTest {
 
   private static final OutboxRelaySettings SETTINGS =
       new OutboxRelaySettings(
@@ -24,15 +24,15 @@ class OutboxRelayServiceTest {
           Duration.ofSeconds(1),
           Duration.ofSeconds(10));
 
-  private OutboxTransactionService outboxTransactions;
+  private OutboxTransactions outboxTransactions;
   private TransferEventPublisher eventPublisher;
-  private OutboxRelayService relay;
+  private RelayOutboxEventsService relay;
 
   @BeforeEach
   void setUp() {
-    outboxTransactions = mock(OutboxTransactionService.class);
+    outboxTransactions = mock(OutboxTransactions.class);
     eventPublisher = mock(TransferEventPublisher.class);
-    relay = new OutboxRelayService(outboxTransactions, eventPublisher, SETTINGS);
+    relay = new RelayOutboxEventsService(outboxTransactions, eventPublisher, SETTINGS);
   }
 
   @Test

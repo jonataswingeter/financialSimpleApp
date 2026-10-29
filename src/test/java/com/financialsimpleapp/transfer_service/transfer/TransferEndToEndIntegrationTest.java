@@ -59,7 +59,7 @@ import org.springframework.test.web.servlet.client.RestTestClient;
 
 /**
  * Exercises the whole transactional outbox flow against real PostgreSQL and Kafka containers: HTTP
- * request -> transfer + outbox row (same transaction) -> OutboxRelayService -> Kafka ->
+ * request -> transfer + outbox row (same transaction) -> RelayOutboxEventsService -> Kafka ->
  * TransferAcceptedListener -> balances, ledger entries and COMPLETED status.
  */
 @SpringBootTest(

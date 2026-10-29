@@ -8,12 +8,16 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * The transaction boundary of the outbox relay: claiming, marking and rescheduling each commit on
+ * their own, so the relay never calls the broker while a transaction is open. Not a use case.
+ */
 @Service
-public class OutboxTransactionService {
+class OutboxTransactions {
 
   private final OutboxRepository outboxRepository;
 
-  public OutboxTransactionService(OutboxRepository outboxRepository) {
+  OutboxTransactions(OutboxRepository outboxRepository) {
     this.outboxRepository = outboxRepository;
   }
 

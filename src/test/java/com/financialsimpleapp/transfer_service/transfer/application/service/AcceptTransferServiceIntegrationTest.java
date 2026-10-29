@@ -36,7 +36,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 @SpringBootTest
 @Import(TestcontainersConfiguration.class)
-class TransferServiceIntegrationTest {
+class AcceptTransferServiceIntegrationTest {
 
   @Autowired private AcceptTransferUseCase acceptTransferUseCase;
 
