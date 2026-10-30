@@ -18,10 +18,10 @@ import com.financialsimpleapp.transfer_service.TestcontainersConfiguration;
 import com.financialsimpleapp.transfer_service.transfer.adapter.in.web.TransferAcceptanceResponse;
 import com.financialsimpleapp.transfer_service.transfer.adapter.in.web.TransferRequest;
 import com.financialsimpleapp.transfer_service.transfer.adapter.in.web.TransferStatusResponse;
+import com.financialsimpleapp.transfer_service.transfer.adapter.out.outbox.EventPublishingException;
+import com.financialsimpleapp.transfer_service.transfer.adapter.out.outbox.KafkaOutboxPublisher;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.ProcessTransferUseCase;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.EventPublishingException;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.LedgerRepository;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferEventPublisher;
 import com.financialsimpleapp.transfer_service.transfer.domain.LedgerEntry;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
@@ -59,7 +59,7 @@ import org.springframework.test.web.servlet.client.RestTestClient;
 
 /**
  * Exercises the whole transactional outbox flow against real PostgreSQL and Kafka containers: HTTP
- * request -> transfer + outbox row (same transaction) -> RelayOutboxEventsService -> Kafka ->
+ * request -> transfer + outbox row (same transaction) -> OutboxRelay -> Kafka ->
  * TransferAcceptedListener -> balances, ledger entries and COMPLETED status.
  */
 @SpringBootTest(
@@ -89,7 +89,7 @@ class TransferEndToEndIntegrationTest {
   private String topic;
 
   // Spies call the real beans; they let a test count calls or inject failures.
-  @MockitoSpyBean private TransferEventPublisher eventPublisher;
+  @MockitoSpyBean private KafkaOutboxPublisher eventPublisher;
 
   @MockitoSpyBean private ProcessTransferUseCase processTransferUseCase;
 

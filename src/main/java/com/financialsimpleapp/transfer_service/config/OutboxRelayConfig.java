@@ -1,6 +1,6 @@
 package com.financialsimpleapp.transfer_service.config;
 
-import com.financialsimpleapp.transfer_service.transfer.application.service.OutboxRelaySettings;
+import com.financialsimpleapp.transfer_service.transfer.adapter.out.outbox.OutboxRelaySettings;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;

@@ -1,20 +1,17 @@
-package com.financialsimpleapp.transfer_service.transfer.application.service;
+package com.financialsimpleapp.transfer_service.transfer.adapter.out.outbox;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.*;
 
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.ClaimedOutboxEvent;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.EventPublishingException;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferEventPublisher;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-class RelayOutboxEventsServiceTest {
+class OutboxRelayTest {
 
   private static final OutboxRelaySettings SETTINGS =
       new OutboxRelaySettings(
@@ -24,15 +21,15 @@ class RelayOutboxEventsServiceTest {
           Duration.ofSeconds(1),
           Duration.ofSeconds(10));
 
-  private OutboxTransactions outboxTransactions;
-  private TransferEventPublisher eventPublisher;
-  private RelayOutboxEventsService relay;
+  private JdbcOutboxRelayStore relayStore;
+  private KafkaOutboxPublisher eventPublisher;
+  private OutboxRelay relay;
 
   @BeforeEach
   void setUp() {
-    outboxTransactions = mock(OutboxTransactions.class);
-    eventPublisher = mock(TransferEventPublisher.class);
-    relay = new RelayOutboxEventsService(outboxTransactions, eventPublisher, SETTINGS);
+    relayStore = mock(JdbcOutboxRelayStore.class);
+    eventPublisher = mock(KafkaOutboxPublisher.class);
+    relay = new OutboxRelay(relayStore, eventPublisher, SETTINGS);
   }
 
   @Test
@@ -40,16 +37,16 @@ class RelayOutboxEventsServiceTest {
     ClaimedOutboxEvent first = event(0);
     ClaimedOutboxEvent second = event(0);
     givenClaimed(first, second);
-    when(outboxTransactions.markPublished(any(), any())).thenReturn(true);
+    when(relayStore.markPublished(any(), any())).thenReturn(true);
 
     int published = relay.relayPendingEvents();
 
     assertEquals(2, published);
     verify(eventPublisher).publish(first.transferId(), first.payload());
     verify(eventPublisher).publish(second.transferId(), second.payload());
-    verify(outboxTransactions).markPublished(first.eventId(), first.lockToken());
-    verify(outboxTransactions).markPublished(second.eventId(), second.lockToken());
-    verify(outboxTransactions, never()).scheduleRetry(any(), any(), any());
+    verify(relayStore).markPublished(first.eventId(), first.lockToken());
+    verify(relayStore).markPublished(second.eventId(), second.lockToken());
+    verify(relayStore, never()).scheduleRetry(any(), any(), any());
   }
 
   @Test
@@ -59,14 +56,13 @@ class RelayOutboxEventsServiceTest {
     doThrow(new EventPublishingException("broker down", null))
         .when(eventPublisher)
         .publish(any(), any());
-    when(outboxTransactions.scheduleRetry(any(), any(), any())).thenReturn(true);
+    when(relayStore.scheduleRetry(any(), any(), any())).thenReturn(true);
 
     int published = relay.relayPendingEvents();
 
     assertEquals(0, published);
-    verify(outboxTransactions)
-        .scheduleRetry(event.eventId(), event.lockToken(), Duration.ofSeconds(4));
-    verify(outboxTransactions, never()).markPublished(any(), any());
+    verify(relayStore).scheduleRetry(event.eventId(), event.lockToken(), Duration.ofSeconds(4));
+    verify(relayStore, never()).markPublished(any(), any());
   }
 
   @Test
@@ -77,30 +73,30 @@ class RelayOutboxEventsServiceTest {
     doThrow(new EventPublishingException("broker down", null))
         .when(eventPublisher)
         .publish(failing.transferId(), failing.payload());
-    when(outboxTransactions.markPublished(any(), any())).thenReturn(true);
+    when(relayStore.markPublished(any(), any())).thenReturn(true);
 
     int published = relay.relayPendingEvents();
 
     assertEquals(1, published);
-    verify(outboxTransactions).markPublished(healthy.eventId(), healthy.lockToken());
+    verify(relayStore).markPublished(healthy.eventId(), healthy.lockToken());
   }
 
   @Test
   void shouldNotRetryWhenMarkingFailsAfterBrokerConfirmed() {
     ClaimedOutboxEvent event = event(0);
     givenClaimed(event);
-    when(outboxTransactions.markPublished(any(), any()))
+    when(relayStore.markPublished(any(), any()))
         .thenThrow(new IllegalStateException("database down"));
 
     int published = relay.relayPendingEvents();
 
     assertEquals(1, published);
-    verify(outboxTransactions, never()).scheduleRetry(any(), any(), any());
+    verify(relayStore, never()).scheduleRetry(any(), any(), any());
   }
 
   @Test
   void shouldPublishNothingWhenClaimingFails() {
-    when(outboxTransactions.claimPending(anyInt(), any()))
+    when(relayStore.claimPending(anyInt(), any()))
         .thenThrow(new IllegalStateException("database down"));
 
     assertEquals(0, relay.relayPendingEvents());
@@ -113,7 +109,7 @@ class RelayOutboxEventsServiceTest {
 
     relay.relayPendingEvents();
 
-    verify(outboxTransactions).claimPending(10, Duration.ofMinutes(5));
+    verify(relayStore).claimPending(10, Duration.ofMinutes(5));
   }
 
   @Test
@@ -140,7 +136,7 @@ class RelayOutboxEventsServiceTest {
   }
 
   private void givenClaimed(ClaimedOutboxEvent... events) {
-    when(outboxTransactions.claimPending(anyInt(), any())).thenReturn(List.of(events));
+    when(relayStore.claimPending(anyInt(), any())).thenReturn(List.of(events));
   }
 
   private static ClaimedOutboxEvent event(int attempts) {

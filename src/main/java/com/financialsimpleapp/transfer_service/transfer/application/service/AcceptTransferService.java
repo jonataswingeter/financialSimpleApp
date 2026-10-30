@@ -8,8 +8,8 @@ import com.financialsimpleapp.transfer_service.transfer.application.port.out.Exi
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.IdempotencyRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferRepository;
+import com.financialsimpleapp.transfer_service.transfer.domain.AcceptedTransfer;
 import com.financialsimpleapp.transfer_service.transfer.domain.Money;
-import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 import java.util.Objects;
 import java.util.UUID;
@@ -43,8 +43,8 @@ public class AcceptTransferService implements AcceptTransferUseCase {
     Objects.requireNonNull(clientId, "Client ID is required");
     TransferSupport.validateIdempotencyKey(idempotencyKey);
 
-    Transfer transfer =
-        Transfer.accept(
+    AcceptedTransfer transfer =
+        AcceptedTransfer.accept(
             UUID.randomUUID(),
             clientId,
             command.fromAccountId(),

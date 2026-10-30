@@ -1,44 +1,49 @@
-package com.financialsimpleapp.transfer_service.transfer.application.service;
+package com.financialsimpleapp.transfer_service.transfer.adapter.out.outbox;
 
-import com.financialsimpleapp.transfer_service.transfer.application.port.in.RelayOutboxEventsUseCase;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.ClaimedOutboxEvent;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferEventPublisher;
 import java.time.Duration;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 
 /**
- * Relays outbox events to the broker.
+ * The message relay of the transactional outbox (polling publisher): delivers the events the
+ * application stored in {@code outbox_events} to the broker, at least once.
+ *
+ * <p>This is infrastructure, not a use case: replacing it with change data capture (e.g. Debezium)
+ * would not change the application or the domain.
  *
  * <p>Deliberately not {@code @Transactional}: the broker must never be called while a database
  * transaction is open. Claiming, marking and rescheduling each run in their own short transaction.
  */
-@Service
-public class RelayOutboxEventsService implements RelayOutboxEventsUseCase {
+@Component
+class OutboxRelay {
 
-  private static final Logger log = LoggerFactory.getLogger(RelayOutboxEventsService.class);
+  private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
 
-  private final OutboxTransactions outboxTransactions;
-  private final TransferEventPublisher eventPublisher;
+  private final JdbcOutboxRelayStore relayStore;
+  private final KafkaOutboxPublisher publisher;
   private final OutboxRelaySettings settings;
 
-  public RelayOutboxEventsService(
-      OutboxTransactions outboxTransactions,
-      TransferEventPublisher eventPublisher,
+  OutboxRelay(
+      JdbcOutboxRelayStore relayStore,
+      KafkaOutboxPublisher publisher,
       OutboxRelaySettings settings) {
-    this.outboxTransactions = outboxTransactions;
-    this.eventPublisher = eventPublisher;
+    this.relayStore = relayStore;
+    this.publisher = publisher;
     this.settings = settings;
   }
 
-  @Override
-  public int relayPendingEvents() {
+  /**
+   * Publishes the outbox events that are due.
+   *
+   * @return how many events the broker confirmed
+   */
+  int relayPendingEvents() {
     final List<ClaimedOutboxEvent> events;
 
     try {
-      events = outboxTransactions.claimPending(settings.batchSize(), settings.leaseDuration());
+      events = relayStore.claimPending(settings.batchSize(), settings.leaseDuration());
     } catch (RuntimeException ex) {
       log.error("Failed to claim outbox events", ex);
       return 0;
@@ -62,7 +67,7 @@ public class RelayOutboxEventsService implements RelayOutboxEventsUseCase {
 
   private boolean relay(ClaimedOutboxEvent event) {
     try {
-      eventPublisher.publish(event.transferId(), event.payload());
+      publisher.publish(event.transferId(), event.payload());
     } catch (RuntimeException publishException) {
       scheduleRetryAfterPublishFailure(event, publishException);
       return false;
@@ -71,7 +76,7 @@ public class RelayOutboxEventsService implements RelayOutboxEventsUseCase {
     // O Kafka confirmou o envio. Agora atualizamos o PostgreSQL
     // em uma transação separada.
     try {
-      boolean marked = outboxTransactions.markPublished(event.eventId(), event.lockToken());
+      boolean marked = relayStore.markPublished(event.eventId(), event.lockToken());
 
       if (!marked) {
         log.warn("Broker accepted event {}, but its outbox lease was lost", event.eventId());
@@ -95,8 +100,7 @@ public class RelayOutboxEventsService implements RelayOutboxEventsUseCase {
     Duration delay = retryDelay(event.attempts());
 
     try {
-      boolean scheduled =
-          outboxTransactions.scheduleRetry(event.eventId(), event.lockToken(), delay);
+      boolean scheduled = relayStore.scheduleRetry(event.eventId(), event.lockToken(), delay);
 
       if (scheduled) {
         log.warn(

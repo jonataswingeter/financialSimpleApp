@@ -1,4 +1,4 @@
-package com.financialsimpleapp.transfer_service.transfer.application.port.out;
+package com.financialsimpleapp.transfer_service.transfer.adapter.out.outbox;
 
 public class EventPublishingException extends RuntimeException {
 

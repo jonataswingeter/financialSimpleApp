@@ -17,8 +17,8 @@ mvn spotless:apply                         # format everything (fixes all format
 mvn checkstyle:check                       # lint only
 mvn test -Dtest=TransferTest               # one test class
 mvn test -Dtest='TransferTest$Execute'     # one @Nested class
-mvn test -Dtest=RelayOutboxEventsServiceTest#shouldScheduleRetryWithBackoffWhenPublishingFails   # one method
-mvn verify -Dtest='TransferTest,RelayOutboxEventsServiceTest,ArchitectureTest' -Dsurefire.failIfNoSpecifiedTests=false   # everything that runs without Docker
+mvn test -Dtest=OutboxRelayTest#shouldScheduleRetryWithBackoffWhenPublishingFails   # one method
+mvn verify -Dtest='TransferTest,MoneyTest,OutboxRelayTest,ArchitectureTest' -Dsurefire.failIfNoSpecifiedTests=false   # everything that runs without Docker
 ```
 
 Run locally:
@@ -45,16 +45,17 @@ transfer/application/port/in/    use-case interfaces + commands, results, and th
 transfer/application/port/out/   repository / publisher interfaces the application needs
 transfer/application/service/    use-case implementations
 transfer/adapter/in/web/         REST controller, DTOs, exception handler
-transfer/adapter/in/messaging/   Kafka listener, @Scheduled outbox trigger, topic + DLT config
+transfer/adapter/in/messaging/   Kafka listener, topic + DLT config
 transfer/adapter/out/persistence JdbcTemplate repositories (no JPA)
-transfer/adapter/out/messaging/  Kafka publisher
+transfer/adapter/out/outbox/     transactional outbox: OutboxRepository adapter + the message relay (scheduler, claim/lease SQL, Kafka publisher)
 config/                          composition root (beans, settings) — exempt from layer rules
 ```
 
 Dependency rules, all checked by `src/test/.../ArchitectureTest.java`:
 - Adapters depend only on **ports** and the domain, never on `application.service`.
 - Implementations of `port.in` live in `application.service`; implementations of `port.out` live in `adapter.out`.
-- One service per input port, named after it: `FooUseCase` is implemented by `FooService`. For example, `AcceptTransferUseCase` is implemented by `AcceptTransferService`. Helpers in `application.service` that are not use cases, such as `OutboxTransactions` and `TransferSupport`, don't use the `Service` suffix.
+- One service per input port, named after it: `FooUseCase` is implemented by `FooService`. For example, `AcceptTransferUseCase` is implemented by `AcceptTransferService`. Helpers in `application.service` that are not use cases, such as `TransferSupport`, don't use the `Service` suffix.
+- Only business use cases are input ports. Technical background work (like the outbox relay) is an adapter, not an application service.
 - The application layer must not import web, Kafka, JDBC, servlet or Jackson classes. `@Service` and `@Transactional` are the deliberate exceptions.
 - Adding a new adapter package means adding it to the `onionArchitecture()` rule in that test.
 
@@ -68,13 +69,13 @@ Dependency rules, all checked by `src/test/.../ArchitectureTest.java`:
    The response is `202 Accepted` with a `Location` header. If the key is already taken, the outcome depends on the SHA-256 request hash:
    - **Same hash:** the candidate transfer is deleted and the original is returned with `replayed=true`.
    - **Different hash:** `IdempotencyConflictException` is thrown, which becomes `409`.
-2. **Relay.** `OutboxRelayScheduler` (`@Scheduled`) calls `RelayOutboxEventsService` through `RelayOutboxEventsUseCase`. The relay:
+2. **Relay.** This is infrastructure, not a use case: the application's part of the outbox pattern ends at `OutboxRepository.append`. Everything below lives in `adapter/out/outbox` and could be replaced by change data capture (e.g. Debezium) without touching the application or the domain. `OutboxRelayScheduler` (`@Scheduled`) calls `OutboxRelay`, which:
    - claims a batch with `FOR UPDATE SKIP LOCKED` and sets a lease (`locked_until` + `lock_token`);
-   - publishes each event through `TransferEventPublisher`, waiting for the broker to confirm;
+   - publishes each event through `KafkaOutboxPublisher`, waiting for the broker to confirm;
    - marks the event published only after that confirmation;
    - on a send failure, schedules a retry with exponential backoff.
 
-   The relay is **deliberately not `@Transactional`**: Kafka must never be called while a DB transaction is open. Claim, mark and retry each run in their own short transaction via the package-private `OutboxTransactions`. A lost or expired lease means the event is re-sent, so delivery is **at-least-once**.
+   The relay is **deliberately not `@Transactional`**: Kafka must never be called while a DB transaction is open. Claim, mark and retry each run in their own short transaction (`JdbcOutboxRelayStore`, one `@Transactional` per method). A lost or expired lease means the event is re-sent, so delivery is **at-least-once**.
 3. **Process.** `TransferAcceptedListener` deserializes the event and calls `ProcessTransferUseCase`. `ProcessTransferService` then:
    - locks the transfer row (`TransferRepository.lockById`) and both account rows (`AccountRepository.lockByIds`, ordered by id to avoid deadlocks), all `FOR UPDATE`;
    - returns early if the transfer is already final, which makes duplicate deliveries harmless;
@@ -98,11 +99,17 @@ Keep new rules in the domain, not in services or SQL. The one exception is a mis
 ### Domain model: compact (tactical) DDD
 
 The domain uses DDD's building blocks only where they pay off. Keep it that way:
-- **Aggregates:** `Transfer` (root, owns `clientId`) and `Account`. `Transfer`'s state transitions are private, so it can only be driven through `accept`, `execute` and `rejectForMissingAccount`. A transfer changes three aggregates (itself and two accounts) in one transaction, on purpose: moving money must be atomic, and the row locks make it safe.
+- **Aggregates:** `Transfer` (root, owns `clientId`) and `Account`. A transfer changes three aggregates (itself and two accounts) in one transaction, on purpose: moving money must be atomic, and the row locks make it safe.
+- **Role contracts instead of one public aggregate class:** `Transfer` is package-private and implements one interface per consumer, so the compiler keeps each use case to its part of the lifecycle:
+  - `AcceptedTransfer` (`accept`, `pullEvents`) is what `AcceptTransferService` and `TransferRepository.insert` see;
+  - `ProcessableTransfer` (`restore`, `isFinal`, `execute`, `rejectForMissingAccount`) is what `ProcessTransferService`, `lockById` and `saveOutcome` see;
+  - `TransferState` is the read-only part both share.
+
+  The pre/postconditions are documented on the interfaces and checked in `Transfer`; the state transitions themselves are private. `ArchitectureTest` covers what the compiler can't: `Transfer` must stay non-public, and the static factories have one caller each (`accept` only from `AcceptTransferService`, `restore` only from persistence adapters). Add a new consumer by giving it a role interface, never by making `Transfer` public.
 - **Value objects:**
   - `Money` (amount + currency, scale 2): it is the only place for money rules. Arithmetic and comparisons refuse mixed currencies. Never pass a bare `BigDecimal` amount through the domain.
   - `LedgerEntry`, plus the enums.
-- **Domain events:** aggregates record them (`TransferEvent`, a sealed interface), and the application service stores them in the outbox. To add one, implement `TransferEvent`, record it in the aggregate and decide who consumes it.
+- **Domain event:** `Transfer.accept` records a `TransferAcceptedEvent`, and `AcceptTransferService` drains it with `pullEvents()` into the outbox. It is the only event, on purpose. The outcome (COMPLETED/REJECTED) is a status written by `ProcessTransferService` in the processing transaction, not an event, so there is no common event interface. The same record is also the Kafka contract (domain and integration event in one). Split them once another service consumes the topic.
 - **Repositories:** one output port per aggregate (`TransferRepository`, `AccountRepository`, `LedgerRepository` for the append-only ledger) plus `OutboxRepository`. Don't reintroduce use-case-shaped repositories. `TransferRepository.findStatusById` is the one read-model query.
 - **Deliberately not used:** typed IDs, domain-service layers, factories, specifications, event sourcing, sagas between accounts.
 
@@ -130,9 +137,9 @@ The schema is defined only by the Flyway migrations in `src/main/resources/db/mi
 | Test | Kind | What it covers |
 |---|---|---|
 | `domain/TransferTest`, `domain/MoneyTest` | plain unit | domain rules, state machine, recorded events, money arithmetic and currency safety |
-| `application/service/RelayOutboxEventsServiceTest` | Mockito unit | relay: claim, publish, mark, retry/backoff, lease |
+| `adapter/out/outbox/OutboxRelayTest` | Mockito unit | relay: claim, publish, mark, retry/backoff, lease |
 | `application/service/AcceptTransferServiceIntegrationTest` | `@SpringBootTest` + Testcontainers | acceptance, idempotency, concurrency, rollback when the outbox insert fails |
-| `application/service/OutboxRelayIntegrationTest` | `@SpringBootTest`, mocked publisher | outbox SQL against real Postgres: lease expiry, stale lock tokens, concurrent relays, backoff stored in `next_attempt_at`, send order |
+| `adapter/out/outbox/OutboxRelayIntegrationTest` | `@SpringBootTest`, mocked publisher | outbox SQL against real Postgres: lease expiry, stale lock tokens, concurrent relays, backoff stored in `next_attempt_at`, send order |
 | `application/service/TransferProcessingConcurrencyIntegrationTest` | `@SpringBootTest` + Testcontainers | parallel processing on shared accounts: no overdraft, no deadlock, ledger consistent |
 | `transfer/TransferEndToEndIntegrationTest` | full end-to-end | HTTP → outbox → Kafka → listener: completion, rejection, duplicate delivery, broker outage, rollback + Kafka retry, DLT, message key; uses `RestTestClient` + Awaitility |
 | `ArchitectureTest` | ArchUnit | layer boundaries |

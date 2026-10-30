@@ -35,13 +35,10 @@ class TransferTest {
     void shouldRecordTransferAcceptedEvent() {
       Transfer transfer = newTransfer("100.00");
 
-      List<TransferEvent> events = transfer.pullEvents();
+      List<TransferAcceptedEvent> events = transfer.pullEvents();
 
       assertEquals(1, events.size());
-      TransferAcceptedEvent event =
-          assertInstanceOf(TransferAcceptedEvent.class, events.getFirst());
-      assertEquals(transfer.getId(), event.transferId());
-      assertEquals(TransferAcceptedEvent.TYPE, event.type());
+      assertEquals(transfer.getId(), events.getFirst().transferId());
     }
 
     @Test

@@ -1,18 +1,13 @@
 package com.financialsimpleapp.transfer_service.transfer.application.port.out;
 
-import com.financialsimpleapp.transfer_service.transfer.domain.TransferEvent;
-import java.time.Duration;
-import java.util.List;
-import java.util.UUID;
+import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
 
+/**
+ * The sending side of the transactional outbox. Delivering the stored events to the broker is
+ * infrastructure (the outbox relay adapter) and not the application's concern.
+ */
 public interface OutboxRepository {
 
   /** Stores an event recorded by an aggregate, in the caller's transaction. */
-  void append(TransferEvent event);
-
-  List<ClaimedOutboxEvent> claimPending(int batchSize, Duration lockDuration);
-
-  boolean markPublished(UUID eventId, UUID lockToken);
-
-  boolean scheduleRetry(UUID eventId, UUID lockToken, Duration delay);
+  void append(TransferAcceptedEvent event);
 }

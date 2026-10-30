@@ -6,7 +6,12 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.library.Architectures.onionArchitecture;
 
+import com.financialsimpleapp.transfer_service.transfer.application.service.AcceptTransferService;
+import com.financialsimpleapp.transfer_service.transfer.domain.AcceptedTransfer;
+import com.financialsimpleapp.transfer_service.transfer.domain.ProcessableTransfer;
+import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
+import com.tngtech.archunit.core.domain.JavaMethodCall;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
@@ -34,8 +39,8 @@ class ArchitectureTest {
           .applicationServices("..transfer.application..")
           .adapter("web", "..transfer.adapter.in.web..")
           .adapter("inbound-messaging", "..transfer.adapter.in.messaging..")
-          .adapter("outbound-messaging", "..transfer.adapter.out.messaging..")
           .adapter("persistence", "..transfer.adapter.out.persistence..")
+          .adapter("outbox", "..transfer.adapter.out.outbox..")
           .withOptionalLayers(true)
           .ignoreDependency(resideInAPackage("..transfer_service.config.."), alwaysTrue());
 
@@ -116,6 +121,49 @@ class ArchitectureTest {
           .should(implementExactlyOneInputPortAndBeNamedAfterIt())
           .because(
               "FooUseCase is implemented by FooService, so each is easy to find from the other");
+
+  // The Transfer aggregate is only reachable through its role contracts (AcceptedTransfer,
+  // ProcessableTransfer), so the compiler already keeps each use case to its own methods. These
+  // rules cover what the compiler can't: the class staying hidden, and the static factories.
+
+  @ArchTest
+  static final ArchRule transfer_is_only_visible_through_its_roles =
+      classes()
+          .that()
+          .resideInAPackage("..transfer.domain..")
+          .and()
+          .haveSimpleName("Transfer")
+          .should()
+          .notBePublic()
+          .because("use cases must see a transfer only through the role contract they need");
+
+  @ArchTest
+  static final ArchRule only_the_accept_use_case_accepts_a_transfer =
+      noClasses()
+          .that()
+          .resideOutsideOfPackage("..transfer.domain..")
+          .and()
+          .doNotBelongToAnyOf(AcceptTransferService.class)
+          .should()
+          .callMethodWhere(staticCall(AcceptedTransfer.class, "accept"))
+          .because("a transfer is created only by accepting a client's request");
+
+  @ArchTest
+  static final ArchRule only_persistence_restores_a_transfer =
+      noClasses()
+          .that()
+          .resideOutsideOfPackage("..transfer.domain..")
+          .and()
+          .resideOutsideOfPackage("..transfer.adapter.out.persistence..")
+          .should()
+          .callMethodWhere(staticCall(ProcessableTransfer.class, "restore"))
+          .because("restore bypasses the lifecycle; only stored state may be rebuilt");
+
+  private static DescribedPredicate<JavaMethodCall> staticCall(Class<?> owner, String methodName) {
+    return DescribedPredicate.describe(
+        owner.getSimpleName() + "." + methodName,
+        call -> call.getTargetOwner().isEquivalentTo(owner) && call.getName().equals(methodName));
+  }
 
   private static ArchCondition<JavaClass> implementExactlyOneInputPortAndBeNamedAfterIt() {
     return new ArchCondition<>("implement exactly one input port and be named <Port>Service") {

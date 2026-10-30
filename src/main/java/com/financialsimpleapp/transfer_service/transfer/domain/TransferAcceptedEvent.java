@@ -9,17 +9,12 @@ import java.util.UUID;
  * <p>The record components are the wire format ({@code {"eventId","transferId"}}). Keep them
  * backward compatible: rows already in the outbox and messages already in Kafka use this shape.
  */
-public record TransferAcceptedEvent(UUID eventId, UUID transferId) implements TransferEvent {
+public record TransferAcceptedEvent(UUID eventId, UUID transferId) {
 
   public static final String TYPE = "TRANSFER_ACCEPTED";
 
   public TransferAcceptedEvent {
     Objects.requireNonNull(eventId, "Event ID is required");
     Objects.requireNonNull(transferId, "Transfer ID is required");
-  }
-
-  @Override
-  public String type() {
-    return TYPE;
   }
 }

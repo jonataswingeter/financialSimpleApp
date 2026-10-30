@@ -1,4 +1,4 @@
-package com.financialsimpleapp.transfer_service.transfer.application.service;
+package com.financialsimpleapp.transfer_service.transfer.adapter.out.outbox;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -8,11 +8,7 @@ import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 
 import com.financialsimpleapp.transfer_service.TestcontainersConfiguration;
-import com.financialsimpleapp.transfer_service.transfer.application.port.in.RelayOutboxEventsUseCase;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.ClaimedOutboxEvent;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.EventPublishingException;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferEventPublisher;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -64,13 +60,15 @@ class OutboxRelayIntegrationTest {
 
   @Autowired private OutboxRepository outboxRepository;
 
-  @Autowired private RelayOutboxEventsUseCase relayOutboxEvents;
+  @Autowired private JdbcOutboxRelayStore relayStore;
+
+  @Autowired private OutboxRelay outboxRelay;
 
   @Autowired private JdbcTemplate jdbcTemplate;
 
   @Autowired private OutboxRelaySettings settings;
 
-  @MockitoBean private TransferEventPublisher eventPublisher;
+  @MockitoBean private KafkaOutboxPublisher eventPublisher;
 
   private final Map<UUID, AtomicInteger> sendsPerTransfer = new ConcurrentHashMap<>();
 
@@ -104,14 +102,14 @@ class OutboxRelayIntegrationTest {
   void shouldNotHandOutAnEventWhileItsLeaseIsActive() {
     TransferAcceptedEvent event = insertEvent();
 
-    List<ClaimedOutboxEvent> first = outboxRepository.claimPending(10, LEASE);
-    List<ClaimedOutboxEvent> second = outboxRepository.claimPending(10, LEASE);
+    List<ClaimedOutboxEvent> first = relayStore.claimPending(10, LEASE);
+    List<ClaimedOutboxEvent> second = relayStore.claimPending(10, LEASE);
 
     assertEquals(List.of(event.eventId()), eventIds(first));
     assertTrue(second.isEmpty(), "A leased event must not be claimed again");
 
     // Another relay instance finds nothing to do either.
-    assertEquals(0, relayOutboxEvents.relayPendingEvents());
+    assertEquals(0, outboxRelay.relayPendingEvents());
     assertTrue(sendsPerTransfer.isEmpty());
   }
 
@@ -126,13 +124,13 @@ class OutboxRelayIntegrationTest {
   void shouldRepublishEventWhenOwnerCrashedAfterSendingButBeforeMarking() {
     TransferAcceptedEvent event = insertEvent();
 
-    ClaimedOutboxEvent crashed = single(outboxRepository.claimPending(10, LEASE));
+    ClaimedOutboxEvent crashed = single(relayStore.claimPending(10, LEASE));
     eventPublisher.publish(crashed.transferId(), crashed.payload());
     // ...crash: markPublished is never called.
 
     expireLease(event.eventId());
 
-    assertEquals(1, relayOutboxEvents.relayPendingEvents());
+    assertEquals(1, outboxRelay.relayPendingEvents());
     assertEquals(2, sendsPerTransfer.get(event.transferId()).get());
     assertPublishedAndReleased(event.eventId());
   }
@@ -143,17 +141,17 @@ class OutboxRelayIntegrationTest {
   void shouldIgnoreOutcomeReportedByInstanceThatLostItsLease() {
     TransferAcceptedEvent event = insertEvent();
 
-    ClaimedOutboxEvent stale = single(outboxRepository.claimPending(10, LEASE));
+    ClaimedOutboxEvent stale = single(relayStore.claimPending(10, LEASE));
     expireLease(event.eventId());
-    ClaimedOutboxEvent current = single(outboxRepository.claimPending(10, LEASE));
+    ClaimedOutboxEvent current = single(relayStore.claimPending(10, LEASE));
 
     assertEquals(stale.eventId(), current.eventId());
     assertNotEquals(stale.lockToken(), current.lockToken(), "A new claim gets a new lock token");
 
     // The previous owner wakes up and tries to report an outcome: both are refused.
-    assertFalse(outboxRepository.markPublished(event.eventId(), stale.lockToken()));
+    assertFalse(relayStore.markPublished(event.eventId(), stale.lockToken()));
     assertFalse(
-        outboxRepository.scheduleRetry(event.eventId(), stale.lockToken(), Duration.ofSeconds(1)));
+        relayStore.scheduleRetry(event.eventId(), stale.lockToken(), Duration.ofSeconds(1)));
 
     Map<String, Object> row = outboxRow(event.eventId());
     assertNull(row.get("published_at"));
@@ -161,7 +159,7 @@ class OutboxRelayIntegrationTest {
     assertEquals(current.lockToken(), row.get("lock_token"));
 
     // The current owner is still in control.
-    assertTrue(outboxRepository.markPublished(event.eventId(), current.lockToken()));
+    assertTrue(relayStore.markPublished(event.eventId(), current.lockToken()));
     assertPublishedAndReleased(event.eventId());
   }
 
@@ -185,7 +183,7 @@ class OutboxRelayIntegrationTest {
           // Keep claiming small batches until nothing is left for this worker. Bounded, so a
           // broken lease (events claimable forever) fails the assertions instead of hanging.
           for (int round = 0; round < MAX_ROUNDS; round++) {
-            List<ClaimedOutboxEvent> batch = outboxRepository.claimPending(7, LEASE);
+            List<ClaimedOutboxEvent> batch = relayStore.claimPending(7, LEASE);
             if (batch.isEmpty()) {
               break;
             }
@@ -211,7 +209,7 @@ class OutboxRelayIntegrationTest {
         () -> {
           // Drain until this relay instance finds nothing more to claim.
           for (int round = 0; round < MAX_ROUNDS; round++) {
-            if (relayOutboxEvents.relayPendingEvents() == 0) {
+            if (outboxRelay.relayPendingEvents() == 0) {
               break;
             }
           }
@@ -257,8 +255,8 @@ class OutboxRelayIntegrationTest {
     assertRetryScheduledAfterFailedRelay(event.eventId(), 1, settings.retryBase());
 
     // Backing off: no relay instance may pick the event up before its next attempt time.
-    assertTrue(outboxRepository.claimPending(10, LEASE).isEmpty());
-    assertEquals(0, relayOutboxEvents.relayPendingEvents());
+    assertTrue(relayStore.claimPending(10, LEASE).isEmpty());
+    assertEquals(0, outboxRelay.relayPendingEvents());
 
     makeDue(event.eventId());
     assertRetryScheduledAfterFailedRelay(event.eventId(), 2, settings.retryBase().multipliedBy(2));
@@ -270,7 +268,7 @@ class OutboxRelayIntegrationTest {
     doNothing().when(eventPublisher).publish(any(UUID.class), anyString());
     makeDue(event.eventId());
 
-    assertEquals(1, relayOutboxEvents.relayPendingEvents());
+    assertEquals(1, outboxRelay.relayPendingEvents());
     assertPublishedAndReleased(event.eventId());
     assertEquals(3, outboxRow(event.eventId()).get("attempts"), "A success is not an attempt");
   }
@@ -304,10 +302,10 @@ class OutboxRelayIntegrationTest {
     List<UUID> created = insertEventsInCreationOrder(2 * batch + 5);
 
     // Two full batches and a partial one, then nothing left.
-    assertEquals(batch, relayOutboxEvents.relayPendingEvents());
-    assertEquals(batch, relayOutboxEvents.relayPendingEvents());
-    assertEquals(5, relayOutboxEvents.relayPendingEvents());
-    assertEquals(0, relayOutboxEvents.relayPendingEvents());
+    assertEquals(batch, outboxRelay.relayPendingEvents());
+    assertEquals(batch, outboxRelay.relayPendingEvents());
+    assertEquals(5, outboxRelay.relayPendingEvents());
+    assertEquals(0, outboxRelay.relayPendingEvents());
 
     assertEquals(created, List.copyOf(sendOrder));
   }
@@ -337,7 +335,7 @@ class OutboxRelayIntegrationTest {
         .when(eventPublisher)
         .publish(any(UUID.class), anyString());
 
-    assertEquals(2, relayOutboxEvents.relayPendingEvents());
+    assertEquals(2, outboxRelay.relayPendingEvents());
     assertEquals(created.subList(1, 3), List.copyOf(sendOrder));
 
     // The broker accepts it again; once its backoff has passed, the oldest event goes last.
@@ -350,7 +348,7 @@ class OutboxRelayIntegrationTest {
         .publish(any(UUID.class), anyString());
     makeDue(eventIdOf(failing));
 
-    assertEquals(1, relayOutboxEvents.relayPendingEvents());
+    assertEquals(1, outboxRelay.relayPendingEvents());
     assertEquals(List.of(created.get(1), created.get(2), failing), List.copyOf(sendOrder));
   }
 
@@ -392,7 +390,7 @@ class OutboxRelayIntegrationTest {
   private void assertRetryScheduledAfterFailedRelay(
       UUID eventId, int expectedAttempts, Duration delay) {
     Instant before = databaseNow();
-    assertEquals(0, relayOutboxEvents.relayPendingEvents());
+    assertEquals(0, outboxRelay.relayPendingEvents());
     Instant after = databaseNow();
 
     Map<String, Object> row = outboxRow(eventId);

@@ -1,8 +1,8 @@
-package com.financialsimpleapp.transfer_service.transfer.application.port.out;
+package com.financialsimpleapp.transfer_service.transfer.adapter.out.outbox;
 
 import java.util.UUID;
 
-public record ClaimedOutboxEvent(
+record ClaimedOutboxEvent(
     UUID eventId,
     UUID transferId,
     String eventType,

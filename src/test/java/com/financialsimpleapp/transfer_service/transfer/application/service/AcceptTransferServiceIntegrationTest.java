@@ -12,7 +12,7 @@ import com.financialsimpleapp.transfer_service.transfer.application.port.in.Acce
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.IdempotencyConflictException;
 import com.financialsimpleapp.transfer_service.transfer.application.port.in.TransferAcceptanceResult;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
-import com.financialsimpleapp.transfer_service.transfer.domain.TransferEvent;
+import com.financialsimpleapp.transfer_service.transfer.domain.TransferAcceptedEvent;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 import java.math.BigDecimal;
 import java.util.Currency;
@@ -129,7 +129,7 @@ class AcceptTransferServiceIntegrationTest {
   void shouldRollbackAllWritesWhenOutboxInsertFails() {
     doThrow(new IllegalStateException("Simulated outbox failure"))
         .when(outboxRepository)
-        .append(any(TransferEvent.class));
+        .append(any(TransferAcceptedEvent.class));
 
     IllegalStateException exception =
         assertThrows(
@@ -137,7 +137,7 @@ class AcceptTransferServiceIntegrationTest {
 
     assertEquals("Simulated outbox failure", exception.getMessage());
 
-    verify(outboxRepository).append(any(TransferEvent.class));
+    verify(outboxRepository).append(any(TransferAcceptedEvent.class));
 
     assertEquals(0, countTransfers());
     assertEquals(0, countIdempotencyRecords());

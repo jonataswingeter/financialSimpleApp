@@ -1,4 +1,4 @@
-package com.financialsimpleapp.transfer_service.transfer.application.service;
+package com.financialsimpleapp.transfer_service.transfer.adapter.out.outbox;
 
 import java.time.Duration;
 

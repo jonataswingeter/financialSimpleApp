@@ -2,9 +2,10 @@ package com.financialsimpleapp.transfer_service.transfer.adapter.out.persistence
 
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferRepository;
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferStatusData;
+import com.financialsimpleapp.transfer_service.transfer.domain.AcceptedTransfer;
 import com.financialsimpleapp.transfer_service.transfer.domain.Money;
+import com.financialsimpleapp.transfer_service.transfer.domain.ProcessableTransfer;
 import com.financialsimpleapp.transfer_service.transfer.domain.RejectionReason;
-import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 import java.util.Currency;
 import java.util.List;
@@ -23,7 +24,7 @@ public class JdbcTransferRepository implements TransferRepository {
   }
 
   @Override
-  public void insert(Transfer transfer) {
+  public void insert(AcceptedTransfer transfer) {
     jdbcTemplate.update(
         """
         INSERT INTO transfer_requests (
@@ -57,8 +58,8 @@ public class JdbcTransferRepository implements TransferRepository {
   }
 
   @Override
-  public Optional<Transfer> lockById(UUID transferId) {
-    List<Transfer> rows =
+  public Optional<ProcessableTransfer> lockById(UUID transferId) {
+    List<ProcessableTransfer> rows =
         jdbcTemplate.query(
             """
             SELECT id, client_id, from_account_id, to_account_id,
@@ -70,7 +71,7 @@ public class JdbcTransferRepository implements TransferRepository {
             (rs, rowNum) -> {
               String rejectionCode = rs.getString("rejection_code");
 
-              return Transfer.restore(
+              return ProcessableTransfer.restore(
                   rs.getObject("id", UUID.class),
                   rs.getObject("client_id", UUID.class),
                   rs.getObject("from_account_id", UUID.class),
@@ -87,7 +88,7 @@ public class JdbcTransferRepository implements TransferRepository {
   }
 
   @Override
-  public void saveOutcome(Transfer transfer) {
+  public void saveOutcome(ProcessableTransfer transfer) {
     int updated =
         switch (transfer.getStatus()) {
           case COMPLETED ->

@@ -6,7 +6,7 @@ import com.financialsimpleapp.transfer_service.transfer.application.port.out.Led
 import com.financialsimpleapp.transfer_service.transfer.application.port.out.TransferRepository;
 import com.financialsimpleapp.transfer_service.transfer.domain.Account;
 import com.financialsimpleapp.transfer_service.transfer.domain.LedgerEntry;
-import com.financialsimpleapp.transfer_service.transfer.domain.Transfer;
+import com.financialsimpleapp.transfer_service.transfer.domain.ProcessableTransfer;
 import com.financialsimpleapp.transfer_service.transfer.domain.TransferStatus;
 import java.util.List;
 import java.util.Map;
@@ -35,7 +35,7 @@ public class ProcessTransferService implements ProcessTransferUseCase {
   @Override
   @Transactional
   public void process(UUID transferId) {
-    Transfer transfer =
+    ProcessableTransfer transfer =
         transferRepository
             .lockById(transferId)
             .orElseThrow(() -> new IllegalStateException("Transfer does not exist: " + transferId));

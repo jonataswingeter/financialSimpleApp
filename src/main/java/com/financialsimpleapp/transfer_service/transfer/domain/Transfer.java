@@ -6,14 +6,22 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Aggregate root of a transfer request. Created by {@link #accept}, which records a {@link
- * TransferAcceptedEvent}; later loaded with {@link #restore} and finished by {@link #execute} or
- * {@link #rejectForMissingAccount}.
+ * Aggregate root of a transfer request. Status flow: ACCEPTED -> (PROCESSING) -> COMPLETED |
+ * REJECTED. PROCESSING only exists inside {@link #execute}; it is never persisted.
  *
- * <p>Status flow: ACCEPTED -> (PROCESSING) -> COMPLETED | REJECTED. PROCESSING only exists inside
- * {@link #execute}; it is never persisted.
+ * <p>Package-private on purpose: outside the domain a transfer is only seen through one of its role
+ * contracts, so each use case can only call its own part of the lifecycle:
+ *
+ * <ul>
+ *   <li>{@link AcceptedTransfer}: created by {@code accept}, hands out the recorded event;
+ *   <li>{@link ProcessableTransfer}: rebuilt by {@code restore}, finished by {@code execute} or
+ *       {@code rejectForMissingAccount};
+ *   <li>{@link TransferState}: the read-only state both share, used by persistence.
+ * </ul>
+ *
+ * <p>The contracts (pre/postconditions) are documented on the interfaces and checked here.
  */
-public class Transfer {
+final class Transfer implements AcceptedTransfer, ProcessableTransfer {
 
   private final UUID id;
   private final UUID clientId;
@@ -24,7 +32,7 @@ public class Transfer {
   private TransferStatus status;
   private RejectionReason rejectionReason;
 
-  private final List<TransferEvent> events = new ArrayList<>();
+  private final List<TransferAcceptedEvent> events = new ArrayList<>();
 
   private Transfer(
       UUID id,
@@ -56,8 +64,7 @@ public class Transfer {
     this.rejectionReason = rejectionReason;
   }
 
-  /** Accepts a new transfer request and records the event that will trigger its processing. */
-  public static Transfer accept(
+  static Transfer accept(
       UUID id, UUID clientId, UUID fromAccountId, UUID toAccountId, Money amount) {
     Transfer transfer =
         new Transfer(
@@ -68,8 +75,7 @@ public class Transfer {
     return transfer;
   }
 
-  /** Rebuilds a transfer that was already persisted. Records no events. */
-  public static Transfer restore(
+  static Transfer restore(
       UUID id,
       UUID clientId,
       UUID fromAccountId,
@@ -80,23 +86,19 @@ public class Transfer {
     return new Transfer(id, clientId, fromAccountId, toAccountId, amount, status, rejectionReason);
   }
 
-  /** Returns the events recorded since the last call, and forgets them. */
-  public List<TransferEvent> pullEvents() {
-    List<TransferEvent> pulled = List.copyOf(events);
+  @Override
+  public List<TransferAcceptedEvent> pullEvents() {
+    List<TransferAcceptedEvent> pulled = List.copyOf(events);
     events.clear();
     return pulled;
   }
 
+  @Override
   public boolean isFinal() {
     return status == TransferStatus.COMPLETED || status == TransferStatus.REJECTED;
   }
 
-  /**
-   * Moves the money between the given accounts, or rejects the transfer when a business rule is
-   * violated.
-   *
-   * @return the ledger entries to record; empty when rejected
-   */
+  @Override
   public List<LedgerEntry> execute(Account source, Account destination) {
     Objects.requireNonNull(source, "Source account is required");
     Objects.requireNonNull(destination, "Destination account is required");
@@ -123,7 +125,7 @@ public class Transfer {
         LedgerEntry.credit(id, destination.getId(), amount));
   }
 
-  /** Rejects the transfer because one of its accounts does not exist. */
+  @Override
   public void rejectForMissingAccount() {
     startProcessing();
     reject(RejectionReason.ACCOUNT_NOT_FOUND);
@@ -168,30 +170,37 @@ public class Transfer {
     rejectionReason = Objects.requireNonNull(reason, "Rejection reason is required");
   }
 
+  @Override
   public UUID getId() {
     return id;
   }
 
+  @Override
   public UUID getClientId() {
     return clientId;
   }
 
+  @Override
   public UUID getFromAccountId() {
     return fromAccountId;
   }
 
+  @Override
   public UUID getToAccountId() {
     return toAccountId;
   }
 
+  @Override
   public Money getAmount() {
     return amount;
   }
 
+  @Override
   public TransferStatus getStatus() {
     return status;
   }
 
+  @Override
   public RejectionReason getRejectionReason() {
     return rejectionReason;
   }

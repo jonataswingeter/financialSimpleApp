@@ -1,38 +1,22 @@
-package com.financialsimpleapp.transfer_service.transfer.adapter.out.persistence;
+package com.financialsimpleapp.transfer_service.transfer.adapter.out.outbox;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.ClaimedOutboxEvent;
-import com.financialsimpleapp.transfer_service.transfer.application.port.out.OutboxRepository;
-import com.financialsimpleapp.transfer_service.transfer.domain.TransferEvent;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * The relay's side of the outbox table: claiming due events under a lease, and recording the
+ * outcome of a send.
+ *
+ * <p>Each method is its own short transaction, so the relay never calls the broker while a
+ * transaction is open. A lease is identified by its lock token: an instance that lost its lease
+ * cannot overwrite the new owner's outcome.
+ */
 @Repository
-public class JdbcOutboxRepository implements OutboxRepository {
-
-  private static final String INSERT_EVENT =
-      """
-      INSERT INTO outbox_events (
-          event_id,
-          aggregate_id,
-          event_type,
-          payload,
-          created_at,
-          published_at,
-          attempts,
-          next_attempt_at,
-          locked_until,
-          lock_token
-      )
-      VALUES (
-          ?, ?, ?, CAST(? AS JSONB),
-          now(), NULL, 0, now(), NULL, NULL
-      )
-      """;
+class JdbcOutboxRelayStore {
 
   private static final String CLAIM_PENDING =
       """
@@ -89,28 +73,12 @@ public class JdbcOutboxRepository implements OutboxRepository {
       """;
 
   private final JdbcTemplate jdbcTemplate;
-  private final ObjectMapper objectMapper;
 
-  public JdbcOutboxRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+  JdbcOutboxRelayStore(JdbcTemplate jdbcTemplate) {
     this.jdbcTemplate = jdbcTemplate;
-    this.objectMapper = objectMapper;
   }
 
-  @Override
-  public void append(TransferEvent event) {
-    jdbcTemplate.update(
-        INSERT_EVENT, event.eventId(), event.transferId(), event.type(), toJson(event));
-  }
-
-  private String toJson(Object event) {
-    try {
-      return objectMapper.writeValueAsString(event);
-    } catch (JsonProcessingException exception) {
-      throw new IllegalStateException("Could not serialize outbox event", exception);
-    }
-  }
-
-  @Override
+  @Transactional
   public List<ClaimedOutboxEvent> claimPending(int batchSize, Duration lockDuration) {
 
     if (batchSize <= 0) {
@@ -133,13 +101,13 @@ public class JdbcOutboxRepository implements OutboxRepository {
         lockMillis);
   }
 
-  @Override
+  @Transactional
   public boolean markPublished(UUID eventId, UUID lockToken) {
 
     return jdbcTemplate.update(MARK_PUBLISHED, eventId, lockToken) == 1;
   }
 
-  @Override
+  @Transactional
   public boolean scheduleRetry(UUID eventId, UUID lockToken, Duration delay) {
 
     long delayMillis = positiveMillis(delay, "delay");
